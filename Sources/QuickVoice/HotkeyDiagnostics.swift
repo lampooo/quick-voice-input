@@ -36,13 +36,15 @@ final class HotkeyDiagnostics: ObservableObject {
         self.settings = settings
     }
 
-    static func buildCandidates(current: Hotkey, weType: WeTypeStatus) -> [Candidate] {
+    static func buildCandidates(current resolution: HotkeyResolution, weType: WeTypeStatus) -> [Candidate] {
         var list: [Candidate] = []
         func add(_ hotkey: Hotkey, _ title: String) {
             guard hotkey.isValid, !list.contains(where: { $0.hotkey == hotkey }) else { return }
             list.append(Candidate(title: title, hotkey: hotkey))
         }
-        add(current, "当前设置：" + (HotkeyPreset.matching(current)?.title ?? current.displayName))
+        let current = resolution.hotkey
+        let origin = resolution.followsWeType ? "（跟随微信输入法）" : ""
+        add(current, "当前生效：" + (HotkeyPreset.matching(current)?.title ?? current.displayName) + origin)
         if let weTypeHotkey = weType.voice?.pushToTalk?.hotkey {
             add(weTypeHotkey, "微信输入法当前的「按住说话」：\(weTypeHotkey.displayName)")
         }
@@ -72,7 +74,7 @@ final class HotkeyDiagnostics: ObservableObject {
         summary = nil
         suggestion = nil
         let weType = WeTypeStatus.inspect()
-        candidates = Self.buildCandidates(current: settings.hotkey, weType: weType)
+        candidates = Self.buildCandidates(current: weType.resolution(for: settings), weType: weType)
 
         guard Permissions.isAccessibilityTrusted else {
             summary = "需要先授予「辅助功能」权限，快捷语音输入才能替你按键。"
@@ -188,7 +190,7 @@ final class HotkeyDiagnostics: ObservableObject {
     private func finish(secureInput: Bool) {
         isRunning = false
         progress = nil
-        let current = settings.hotkey
+        let current = settings.resolvedHotkey().hotkey
         let working = candidates.filter { $0.outcome?.isPushToTalk == true }
         var lines: [String] = []
         if working.contains(where: { $0.hotkey == current }) {
@@ -211,7 +213,11 @@ final class HotkeyDiagnostics: ObservableObject {
 
     func adoptSuggestion() {
         guard let suggestion else { return }
-        settings.hotkey = suggestion.hotkey
+        if WeTypeConfigCache.shared.current()?.pushToTalk?.hotkey == suggestion.hotkey {
+            settings.hotkeySource = .followWeType
+        } else {
+            settings.useManualHotkey(suggestion.hotkey)
+        }
         summary = "已改用「\(suggestion.hotkey.displayName)」。"
         self.suggestion = nil
     }
@@ -223,7 +229,7 @@ final class HotkeyDiagnostics: ObservableObject {
     #if DEBUG
     /// Fills in sample results so layout can be checked without running the test.
     func loadPreviewResults(weType: WeTypeStatus) {
-        candidates = Self.buildCandidates(current: settings.hotkey, weType: weType)
+        candidates = Self.buildCandidates(current: weType.resolution(for: settings), weType: weType)
         let outcomes: [HotkeyTestOutcome] = [.noResponse, .pushToTalk(latency: 0.42), .noResponse, .toggle(latency: 0.3), .micBusy]
         for index in candidates.indices {
             candidates[index].outcome = outcomes[index % outcomes.count]

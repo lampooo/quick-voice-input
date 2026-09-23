@@ -30,6 +30,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         settings.$hotkey.dropFirst().sink { [weak self] _ in
             self?.voice.releaseNow(reason: "hotkey changed")
         }.store(in: &cancellables)
+        settings.$hotkeySource.dropFirst().sink { [weak self] source in
+            self?.voice.releaseNow(reason: "hotkey source changed")
+            Log.info("hotkey source: \(source.rawValue)")
+        }.store(in: &cancellables)
 
         installSignalHandlers()
         lastTrusted = Permissions.isAccessibilityTrusted
@@ -54,11 +58,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         shutdown(reason: "quit")
     }
 
-    func showSetup(step: SetupStep?, autoRunTest: Bool = false) {
+    func showSetup(step: SetupStep?, autoRunTest: Bool = false, startRecording: Bool = false) {
         if setupWindow == nil {
             setupWindow = SetupWindowController(model: SetupModel(settings: settings, diagnostics: diagnostics))
         }
-        setupWindow?.show(step: step, autoRunTest: autoRunTest)
+        setupWindow?.show(step: step, autoRunTest: autoRunTest, startRecording: startRecording)
     }
 
     func enabledDidChange() {

@@ -37,11 +37,17 @@ enum SelfCheck {
         }
 
         let settings = AppSettings.shared
-        lines.append("本应用：\(settings.enabled ? "已启用" : "已暂停")，长按 \(settings.holdDuration) 秒，按住「\(settings.hotkey.displayName)」，自动切换输入法：\(settings.autoSwitchInputSource ? "开" : "关")")
-        switch weType.pushToTalkMatches(settings.hotkey) {
+        let resolution = weType.resolution(for: settings)
+        let source = settings.hotkeySource == .followWeType ? "跟随微信输入法" : "手动指定（\(settings.hotkey.displayName)）"
+        lines.append("本应用：\(settings.enabled ? "已启用" : "已暂停")，长按 \(settings.holdDuration) 秒，快捷键来源：\(source)，自动切换输入法：\(settings.autoSwitchInputSource ? "开" : "关")")
+        lines.append("  长按时按住：\(resolution.hotkey.displayName)" + (resolution.fallbackReason.map { "（\($0)）" } ?? ""))
+        switch weType.pushToTalkMatches(resolution.hotkey) {
         case .some(true): lines.append("  与微信输入法的「按住说话」一致")
         case .some(false): lines.append("  ⚠️ 与微信输入法的「按住说话」不一致")
         case .none: lines.append("  无法判断是否与微信输入法一致")
+        }
+        for risk in resolution.hotkey.risks {
+            lines.append("  ⚠️ " + risk.message)
         }
         if !settings.appRules.isEmpty {
             lines.append("  应用规则：" + settings.appRules.map { "\($0.key)=\($0.value.title)" }.sorted().joined(separator: "，"))

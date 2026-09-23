@@ -1,6 +1,31 @@
 import AppKit
 import QuickVoiceCore
 
+/// Reads WeType's settings file (read-only), re-parsing only when it changes. Safe on any thread.
+final class WeTypeConfigCache {
+    static let shared = WeTypeConfigCache()
+
+    let url = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(WeTypeVoiceConfig.settingsRelativePath)
+    private let lock = NSLock()
+    private var cachedDate: Date?
+    private var cached: Result<WeTypeVoiceConfig, Error>?
+
+    func current() -> WeTypeVoiceConfig? {
+        try? load().get()
+    }
+
+    func load() -> Result<WeTypeVoiceConfig, Error> {
+        let modified = (try? FileManager.default.attributesOfItem(atPath: url.path))?[.modificationDate] as? Date
+        lock.lock()
+        defer { lock.unlock() }
+        if let cached, let modified, modified == cachedDate { return cached }
+        let result = Result { try WeTypeVoiceConfig.load(fromFile: url) }
+        cached = result
+        cachedDate = modified
+        return result
+    }
+}
+
 /// Read-only view of the local WeType installation and its voice shortcut settings.
 struct WeTypeStatus: Equatable {
     var appURL: URL?
@@ -40,7 +65,9 @@ struct WeTypeStatus: Equatable {
             manager.homeDirectoryForCurrentUser.appendingPathComponent("Library/Input Methods/WeType.app"),
         ]
         status.appURL = candidates.first { manager.fileExists(atPath: $0.path) }
-        if let url = status.appURL, let info = Bundle(url: url)?.infoDictionary {
+        // Read Info.plist directly: Bundle caches it, and WeType updates itself in the background.
+        if let url = status.appURL,
+           let info = NSDictionary(contentsOf: url.appendingPathComponent("Contents/Info.plist")) as? [String: Any] {
             let short = info["CFBundleShortVersionString"] as? String
             let build = info["CFBundleVersion"] as? String
             status.version = [short, build.map { "(\($0))" }].compactMap { $0 }.joined()
@@ -48,17 +75,21 @@ struct WeTypeStatus: Equatable {
         status.isEnabled = InputSource.isWeTypeEnabled
         status.isCurrent = InputSource.isWeTypeCurrent
 
-        let settingsURL = manager.homeDirectoryForCurrentUser.appendingPathComponent(WeTypeVoiceConfig.settingsRelativePath)
-        if manager.isReadableFile(atPath: settingsURL.path) {
-            do {
-                status.voice = try WeTypeVoiceConfig.load(fromFile: settingsURL)
-            } catch {
-                status.settingsError = "\(error)"
+        let cache = WeTypeConfigCache.shared
+        if manager.isReadableFile(atPath: cache.url.path) {
+            switch cache.load() {
+            case let .success(config): status.voice = config
+            case let .failure(error): status.settingsError = "\(error)"
             }
         } else if status.isInstalled {
             status.settingsError = "找不到设置文件"
         }
         return status
+    }
+
+    /// The hotkey this app will hold for the given settings, as the menu and setup guide show it.
+    func resolution(for settings: AppSettings) -> HotkeyResolution {
+        HotkeyResolver.resolve(source: settings.hotkeySource, manual: settings.hotkey, weType: voice)
     }
 
     func openSettingsApp() {

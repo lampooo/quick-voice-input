@@ -8,6 +8,7 @@ final class AppSettings: ObservableObject {
     struct Snapshot {
         var enabled: Bool
         var holdDuration: TimeInterval
+        var hotkeySource: HotkeySource
         var hotkey: Hotkey
         var autoSwitchInputSource: Bool
         var appRules: [String: AppRule]
@@ -18,6 +19,7 @@ final class AppSettings: ObservableObject {
     private enum Key {
         static let enabled = "enabled"
         static let holdDuration = "holdDuration"
+        static let hotkeySource = "hotkeySource"
         static let hotkey = "hotkey"
         static let autoSwitchInputSource = "autoSwitchInputSource"
         static let appRules = "appRules"
@@ -30,6 +32,8 @@ final class AppSettings: ObservableObject {
 
     @Published var enabled: Bool { didSet { persist(Key.enabled, enabled) } }
     @Published var holdDuration: TimeInterval { didSet { persist(Key.holdDuration, holdDuration) } }
+    @Published var hotkeySource: HotkeySource { didSet { persist(Key.hotkeySource, hotkeySource.rawValue) } }
+    /// The manually chosen hotkey; also the fallback when WeType's shortcut cannot be followed.
     @Published var hotkey: Hotkey { didSet { persistJSON(Key.hotkey, hotkey) } }
     @Published var autoSwitchInputSource: Bool { didSet { persist(Key.autoSwitchInputSource, autoSwitchInputSource) } }
     @Published var appRules: [String: AppRule] { didSet { persistJSON(Key.appRules, appRules) } }
@@ -44,20 +48,34 @@ final class AppSettings: ObservableObject {
             ?? HotkeyPreset.recommended.hotkey
         let autoSwitch = defaults.object(forKey: Key.autoSwitchInputSource) as? Bool ?? true
         let rules = Self.decode([String: AppRule].self, defaults.data(forKey: Key.appRules)) ?? [:]
+        let source = (defaults.string(forKey: Key.hotkeySource)).flatMap(HotkeySource.init(rawValue:)) ?? .followWeType
 
         self.enabled = enabled
         self.holdDuration = holdDuration
+        self.hotkeySource = source
         self.hotkey = hotkey
         self.autoSwitchInputSource = autoSwitch
         self.appRules = rules
         self.hasCompletedOnboarding = defaults.bool(forKey: Key.hasCompletedOnboarding)
-        cachedSnapshot = Snapshot(enabled: enabled, holdDuration: holdDuration, hotkey: hotkey, autoSwitchInputSource: autoSwitch, appRules: rules)
+        cachedSnapshot = Snapshot(enabled: enabled, holdDuration: holdDuration, hotkeySource: source, hotkey: hotkey, autoSwitchInputSource: autoSwitch, appRules: rules)
     }
 
     var snapshot: Snapshot {
         lock.lock()
         defer { lock.unlock() }
         return cachedSnapshot
+    }
+
+    /// The hotkey to hold right now. Safe on any thread.
+    func resolvedHotkey() -> HotkeyResolution {
+        let current = snapshot
+        return HotkeyResolver.resolve(source: current.hotkeySource, manual: current.hotkey, weType: WeTypeConfigCache.shared.current())
+    }
+
+    /// Switches to a manually chosen hotkey.
+    func useManualHotkey(_ hotkey: Hotkey) {
+        self.hotkey = hotkey
+        hotkeySource = .manual
     }
 
     func rule(for bundleID: String?) -> AppRule {
@@ -76,7 +94,7 @@ final class AppSettings: ObservableObject {
 
     private func refreshSnapshot() {
         lock.lock()
-        cachedSnapshot = Snapshot(enabled: enabled, holdDuration: holdDuration, hotkey: hotkey, autoSwitchInputSource: autoSwitchInputSource, appRules: appRules)
+        cachedSnapshot = Snapshot(enabled: enabled, holdDuration: holdDuration, hotkeySource: hotkeySource, hotkey: hotkey, autoSwitchInputSource: autoSwitchInputSource, appRules: appRules)
         lock.unlock()
     }
 

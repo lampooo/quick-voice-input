@@ -23,6 +23,10 @@ enum PreviewRenderer {
             model.step = step
             save(hosting, to: outputDirectory.appendingPathComponent("setup-\(step.rawValue + 1).png"))
         }
+        model.step = .hotkey
+        settings.hotkeySource = .manual
+        save(hosting, to: outputDirectory.appendingPathComponent("setup-3-manual.png"))
+        settings.hotkeySource = .followWeType
 
         diagnostics.loadPreviewResults(weType: model.weType)
         let results = NSHostingView(rootView:

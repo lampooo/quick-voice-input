@@ -77,9 +77,10 @@ final class VoiceController: EventTapDelegate {
         }
         usleep(settle)
 
+        let resolution = settings.resolvedHotkey()
         stateLock.lock()
         let abort = endRequested || current != generation
-        if !abort { keySynth.press(snapshot.hotkey) }
+        if !abort { keySynth.press(resolution.hotkey) }
         stateLock.unlock()
         guard !abort else {
             Log.info("released before the hotkey was pressed")
@@ -90,7 +91,8 @@ final class VoiceController: EventTapDelegate {
             NSHapticFeedbackManager.defaultPerformer.perform(.levelChange, performanceTime: .now)
         }
         holdStartedAt = ProcessInfo.processInfo.systemUptime
-        Log.info("holding \(snapshot.hotkey.displayName)")
+        let origin = resolution.followsWeType ? "跟随微信输入法" : (resolution.fallbackReason ?? "手动设置")
+        Log.info("holding hotkey \(resolution.hotkey.displayName) (\(origin))")
         startWatchdog()
         recordingNotified = true
         notify(true)

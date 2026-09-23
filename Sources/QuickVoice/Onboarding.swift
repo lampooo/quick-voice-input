@@ -24,6 +24,7 @@ final class SetupModel: ObservableObject {
 
     let settings: AppSettings
     let diagnostics: HotkeyDiagnostics
+    let recorder = HotkeyRecorderModel()
     let testField = TestFieldHandle()
     let tryField = TestFieldHandle()
     var onFinish: (() -> Void)?
@@ -34,7 +35,10 @@ final class SetupModel: ObservableObject {
         self.diagnostics = diagnostics
         diagnostics.focusTestField = { [weak testField] in testField?.focus() }
         diagnostics.clearTestField = { [weak testField] in testField?.clear() }
+        recorder.onFinish = { [weak settings] hotkey in settings?.useManualHotkey(hotkey) }
     }
+
+    var resolution: HotkeyResolution { weType.resolution(for: settings) }
 
     func startRefreshing() {
         timer?.invalidate()
@@ -58,8 +62,9 @@ final class SetupModel: ObservableObject {
         case .permission: return axTrusted
         case .weType: return weType.isInstalled && weType.isEnabled
         case .hotkey:
-            return weType.pushToTalkMatches(settings.hotkey) == true
-                || diagnostics.candidates.contains { $0.hotkey == settings.hotkey && $0.outcome?.isPushToTalk == true }
+            let hotkey = resolution.hotkey
+            return weType.pushToTalkMatches(hotkey) == true
+                || diagnostics.candidates.contains { $0.hotkey == hotkey && $0.outcome?.isPushToTalk == true }
         case .tryIt: return settings.hasCompletedOnboarding
         }
     }
@@ -93,7 +98,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
-    func show(step: SetupStep?, autoRunTest: Bool) {
+    func show(step: SetupStep?, autoRunTest: Bool, startRecording: Bool = false) {
         model.refresh()
         if let step {
             model.step = step
@@ -104,12 +109,15 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         AppActivation.bringToFront(window)
         if autoRunTest {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in self?.model.diagnostics.run() }
+        } else if startRecording {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in self?.model.recorder.start() }
         }
     }
 
     func windowWillClose(_ notification: Notification) {
         model.stopRefreshing()
         model.diagnostics.cancel()
+        model.recorder.stop()
         AppActivation.returnToMenuBar()
     }
 }
@@ -415,33 +423,59 @@ private struct HotkeyStep: View {
         Binding(
             get: { HotkeyPreset.matching(settings.hotkey)?.id ?? "custom" },
             set: { id in
-                if let preset = HotkeyPreset.all.first(where: { $0.id == id }) { settings.hotkey = preset.hotkey }
+                if let preset = HotkeyPreset.all.first(where: { $0.id == id }) { settings.useManualHotkey(preset.hotkey) }
             }
         )
     }
 
     var body: some View {
+        let resolution = model.weType.resolution(for: settings)
         VStack(alignment: .leading, spacing: 16) {
             StepHeader(
                 title: "设置语音快捷键",
-                subtitle: "macOS 不允许普通程序模拟 Fn 键，所以要把微信输入法「按住说话」的快捷键改成一个程序能模拟、平时又用不到的键。推荐「右 Option」。"
+                subtitle: "长按时，快捷语音输入会替你按住微信输入法「按住说话」的快捷键。默认直接跟随微信输入法里的设置，不需要额外改动。"
             )
-            GroupBox {
-                VStack(alignment: .leading, spacing: 8) {
-                    Numbered(index: 1, text: "点「打开微信输入法设置」，进入「语音」相关设置。")
-                    Numbered(index: 2, text: "找到「按住说话」，点它的快捷键框，然后按一下键盘右侧的 Option（⌥）键。")
-                    Numbered(index: 3, text: "回到这里，确认下面显示「一致」，再点「开始测试语音快捷键」。")
-                    HStack {
-                        Button("打开微信输入法设置") { model.weType.openSettingsApp() }
-                            .disabled(!model.weType.isInstalled)
-                        Button("重新读取") { model.refresh() }
-                    }
-                    .padding(.top, 4)
-                }
-                .padding(6)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            Picker("快捷键来源", selection: $settings.hotkeySource) {
+                Text("跟随微信输入法（推荐）").tag(HotkeySource.followWeType)
+                Text("手动指定").tag(HotkeySource.manual)
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .frame(maxWidth: 380)
+
+            if settings.hotkeySource == .followWeType {
+                followSection(resolution)
+            } else {
+                manualSection
+            }
+            HotkeyRiskNotes(hotkey: resolution.hotkey)
+            if let title = weTypeGuideTitle(resolution) {
+                weTypeGuide(title: title)
             }
 
+            Divider()
+            HotkeyTestSection(diagnostics: diagnostics, testField: model.testField)
+        }
+    }
+
+    @ViewBuilder
+    private func followSection(_ resolution: HotkeyResolution) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if resolution.followsWeType {
+                StatusRow(ok: true, text: "微信输入法的「按住说话」是「\(model.weType.pushToTalkDescription)」，长按时会按住同样的键。以后在微信输入法里改键，这里会自动跟着变。")
+            } else {
+                StatusRow(ok: false, text: resolution.fallbackReason ?? "没能跟随微信输入法的设置。")
+            }
+            HStack(spacing: 12) {
+                Button("重新读取微信输入法设置") { model.refresh() }
+                Text("想用别的组合？").font(.callout).foregroundStyle(.secondary)
+                HotkeyRecorderButton(model: model.recorder)
+            }
+        }
+    }
+
+    private var manualSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
             Picker("快捷语音输入替你按住：", selection: presetBinding) {
                 ForEach(HotkeyPreset.all) { preset in
                     Text(preset.title).tag(preset.id)
@@ -454,11 +488,12 @@ private struct HotkeyStep: View {
             if let preset = HotkeyPreset.matching(settings.hotkey) {
                 Text(preset.note).font(.caption).foregroundStyle(.secondary)
             }
-
+            HotkeyRecorderButton(model: model.recorder)
+            Text("录制时直接按下想用的组合，例如先按住左 Option 再按空格。如果按的正好是微信输入法当前的语音快捷键，它可能会被微信输入法拦截，这时直接选「跟随微信输入法」就行。")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
             matchRow
-
-            Divider()
-            HotkeyTestSection(diagnostics: diagnostics, testField: model.testField)
         }
     }
 
@@ -469,23 +504,43 @@ private struct HotkeyStep: View {
         case .some(true):
             StatusRow(ok: true, text: "与微信输入法的「按住说话」（\(weType.pushToTalkDescription)）一致")
         case .some(false):
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 6) {
                 StatusRow(ok: false, text: "微信输入法的「按住说话」目前是「\(weType.pushToTalkDescription)」，和这里选的不一致")
-                if let hotkey = weType.voice?.pushToTalk?.hotkey {
-                    HStack(spacing: 4) {
-                        Text("不想改微信输入法的话，也可以").foregroundStyle(.secondary)
-                        Button("改为跟它一样：\(hotkey.displayName)") { settings.hotkey = hotkey }
-                            .buttonStyle(.link)
-                    }
+                Button("改为跟随微信输入法") { settings.hotkeySource = .followWeType }
+                    .buttonStyle(.link)
                     .font(.callout)
-                } else if weType.voice?.pushToTalk?.usesFn == true {
-                    Text("Fn 无法被程序模拟，请按上面的步骤在微信输入法里改键。")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
             }
         case .none:
             StatusRow(ok: nil, text: "没能读取微信输入法的快捷键设置，可以直接用下面的测试确认。")
+        }
+    }
+
+    private func weTypeGuideTitle(_ resolution: HotkeyResolution) -> String? {
+        guard model.weType.isInstalled else { return nil }
+        if settings.hotkeySource == .followWeType, !resolution.followsWeType {
+            return "需要在微信输入法里换一个键"
+        }
+        if !resolution.hotkey.risks.isEmpty {
+            return "更稳妥的做法（可选）：把微信输入法的「按住说话」改成右 Option"
+        }
+        return nil
+    }
+
+    private func weTypeGuide(title: String) -> some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(title).font(.headline)
+                Numbered(index: 1, text: "点「打开微信输入法设置」，进入「语音」相关设置。")
+                Numbered(index: 2, text: "找到「按住说话」，点它的快捷键框，然后按一下键盘右侧的 Option（⌥）键。")
+                Numbered(index: 3, text: "回到这里点「重新读取」。选的是「跟随微信输入法」的话，这里会自动跟着变。")
+                HStack {
+                    Button("打开微信输入法设置") { model.weType.openSettingsApp() }
+                    Button("重新读取") { model.refresh() }
+                }
+                .padding(.top, 4)
+            }
+            .padding(6)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 }

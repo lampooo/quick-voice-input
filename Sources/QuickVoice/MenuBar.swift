@@ -82,18 +82,24 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         } else {
             menu.addItem(item("辅助功能权限：未授权，点此去授权…", #selector(requestAccessibility)))
         }
+        let resolution = weType.resolution(for: settings)
         if weType.isInstalled {
             menu.addItem(info("微信输入法 \(weType.version ?? "")：按住说话 = \(weType.pushToTalkDescription)"))
-            if weType.pushToTalkMatches(settings.hotkey) == false {
-                menu.addItem(info("⚠️ 与这里选的「\(settings.hotkey.displayName)」不一致"))
+            if let reason = resolution.fallbackReason {
+                menu.addItem(info("⚠️ " + reason))
+            } else if weType.pushToTalkMatches(resolution.hotkey) == false {
+                menu.addItem(info("⚠️ 与这里选的「\(resolution.hotkey.displayName)」不一致"))
             }
         } else {
             menu.addItem(info("未检测到微信输入法"))
         }
+        if !resolution.hotkey.risks.isEmpty {
+            menu.addItem(info("⚠️ 当前快捷键含普通键，可能打出字符，建议改用右 Option"))
+        }
         menu.addItem(.separator())
 
         menu.addItem(holdDurationMenu())
-        menu.addItem(hotkeyMenu())
+        menu.addItem(hotkeyMenu(resolution: resolution, weType: weType))
         let autoSwitch = item("触发前自动切到微信输入法", #selector(toggleAutoSwitch))
         autoSwitch.state = settings.autoSwitchInputSource ? .on : .off
         menu.addItem(autoSwitch)
@@ -122,23 +128,34 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         return parent
     }
 
-    private func hotkeyMenu() -> NSMenuItem {
-        let parent = NSMenuItem(title: "语音快捷键（需与微信输入法一致）", action: nil, keyEquivalent: "")
+    private func hotkeyMenu(resolution: HotkeyResolution, weType: WeTypeStatus) -> NSMenuItem {
+        let parent = NSMenuItem(title: "语音快捷键：\(resolution.hotkey.displayName)", action: nil, keyEquivalent: "")
         let submenu = NSMenu()
         submenu.autoenablesItems = false
-        let current = settings.hotkey
+        let following = settings.hotkeySource == .followWeType
+        let followTitle = resolution.followsWeType
+            ? "跟随微信输入法（当前：\(resolution.hotkey.displayName)）"
+            : "跟随微信输入法（暂时用：\(resolution.hotkey.displayName)）"
+        let follow = item(followTitle, #selector(followWeType))
+        follow.state = following ? .on : .off
+        follow.toolTip = resolution.fallbackReason
+        submenu.addItem(follow)
+        submenu.addItem(.separator())
+        submenu.addItem(info("手动指定"))
+        let manual = settings.hotkey
         for preset in HotkeyPreset.all {
             let entry = item(preset.title, #selector(chooseHotkey(_:)))
             entry.representedObject = preset.id
             entry.toolTip = preset.note
-            entry.state = preset.hotkey == current ? .on : .off
+            entry.state = !following && preset.hotkey == manual ? .on : .off
             submenu.addItem(entry)
         }
-        if HotkeyPreset.matching(current) == nil {
-            let custom = info("自定义：\(current.displayName)")
-            custom.state = .on
+        if HotkeyPreset.matching(manual) == nil {
+            let custom = item("自定义：\(manual.displayName)", #selector(chooseCustomHotkey))
+            custom.state = following ? .off : .on
             submenu.addItem(custom)
         }
+        submenu.addItem(item("录制快捷键…", #selector(recordHotkey)))
         submenu.addItem(.separator())
         let test = item("测试语音快捷键…", #selector(runHotkeyTest))
         test.isEnabled = Permissions.isAccessibilityTrusted
@@ -193,7 +210,19 @@ final class MenuBarController: NSObject, NSMenuDelegate {
 
     @objc private func chooseHotkey(_ sender: NSMenuItem) {
         guard let id = sender.representedObject as? String, let preset = HotkeyPreset.all.first(where: { $0.id == id }) else { return }
-        settings.hotkey = preset.hotkey
+        settings.useManualHotkey(preset.hotkey)
+    }
+
+    @objc private func followWeType() {
+        settings.hotkeySource = .followWeType
+    }
+
+    @objc private func chooseCustomHotkey() {
+        settings.hotkeySource = .manual
+    }
+
+    @objc private func recordHotkey() {
+        app.showSetup(step: .hotkey, startRecording: true)
     }
 
     @objc private func toggleAutoSwitch() {
