@@ -28,6 +28,13 @@ enum PreviewRenderer {
         save(hosting, to: outputDirectory.appendingPathComponent("setup-3-manual.png"))
         settings.hotkeySource = .followWeType
 
+        model.step = .blocklist
+        for bundleID in ["com.tencent.xinWeChat", "com.apple.Terminal", "com.example.removed-app"] {
+            settings.block(bundleID)
+        }
+        save(hosting, to: outputDirectory.appendingPathComponent("setup-5-list.png"))
+        settings.appRules = [:]
+
         diagnostics.loadPreviewResults(weType: model.weType)
         let results = NSHostingView(rootView:
             HotkeyTestSection(diagnostics: diagnostics, testField: TestFieldHandle())

@@ -1,5 +1,5 @@
+import AppKit
 import CoreGraphics
-import Foundation
 import QuickVoiceCore
 
 protocol EventTapDelegate: AnyObject {
@@ -37,6 +37,8 @@ final class EventTap {
     private var results: [Int: TextFieldProbe.Result] = [:]
     /// Tap-thread only: target window of the current mouse-down.
     private var pressWindowNumber = 0
+    /// Tap-thread only: window number → owning app, so blocked apps are recognized at mouse-down.
+    private var windowOwners: [Int: (bundleID: String?, time: TimeInterval)] = [:]
 
     init(settings: AppSettings, probe: TextFieldProbe, keySynth: KeySynth) {
         self.settings = settings
@@ -180,12 +182,14 @@ final class EventTap {
             let snapshot = settings.snapshot
             machine.config.holdDuration = snapshot.holdDuration
             pressWindowNumber = Self.targetWindowNumber(of: event)
+            // In a blocked app the press is not tracked at all: no probe, no timer, no events.
+            let allowed = AppRules.allowsLongPress(bundleID: bundleID(forWindow: pressWindowNumber, now: now), overrides: snapshot.appRules)
             output = machine.mouseDown(
                 at: event.location,
                 time: now,
                 clickCount: Int(event.getIntegerValueField(.mouseEventClickState)),
                 modifierFlags: event.flags.rawValue,
-                enabled: snapshot.enabled
+                enabled: snapshot.enabled && allowed
             )
         case .leftMouseDragged:
             output = machine.mouseDragged(to: event.location, time: now)
@@ -213,6 +217,15 @@ final class EventTap {
     private static func targetWindowNumber(of event: CGEvent) -> Int {
         guard let field = CGEventField(rawValue: 92) else { return 0 }
         return max(0, Int(event.getIntegerValueField(field)))
+    }
+
+    private func bundleID(forWindow number: Int, now: TimeInterval) -> String? {
+        guard number > 0 else { return nil }
+        if let cached = windowOwners[number], now - cached.time < 30 { return cached.bundleID }
+        let bundleID = TextFieldProbe.ownerPID(ofWindow: number).flatMap { NSRunningApplication(processIdentifier: $0)?.bundleIdentifier }
+        if windowOwners.count > 256 { windowOwners.removeAll() }
+        windowOwners[number] = (bundleID, now)
+        return bundleID
     }
 
     private func apply(_ effects: [MachineEffect]) {

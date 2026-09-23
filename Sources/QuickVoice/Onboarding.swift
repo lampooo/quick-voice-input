@@ -4,6 +4,10 @@ import SwiftUI
 
 enum SetupStep: Int, CaseIterable, Identifiable {
     case permission, weType, hotkey, tryIt
+    /// A settings page next to the guide, not a numbered step.
+    case blocklist
+
+    static let guide: [SetupStep] = [.permission, .weType, .hotkey, .tryIt]
 
     var id: Int { rawValue }
 
@@ -13,7 +17,18 @@ enum SetupStep: Int, CaseIterable, Identifiable {
         case .weType: return "微信输入法"
         case .hotkey: return "语音快捷键"
         case .tryIt: return "试一试"
+        case .blocklist: return "屏蔽的软件"
         }
+    }
+
+    var previous: SetupStep? {
+        guard let index = Self.guide.firstIndex(of: self), index > 0 else { return nil }
+        return Self.guide[index - 1]
+    }
+
+    var next: SetupStep? {
+        guard let index = Self.guide.firstIndex(of: self), index + 1 < Self.guide.count else { return nil }
+        return Self.guide[index + 1]
     }
 }
 
@@ -66,6 +81,7 @@ final class SetupModel: ObservableObject {
             return weType.pushToTalkMatches(hotkey) == true
                 || diagnostics.candidates.contains { $0.hotkey == hotkey && $0.outcome?.isPushToTalk == true }
         case .tryIt: return settings.hasCompletedOnboarding
+        case .blocklist: return false
         }
     }
 
@@ -86,7 +102,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
             backing: .buffered,
             defer: false
         )
-        window.title = "快捷语音输入 · 设置向导"
+        window.title = "快捷语音输入 · 设置"
         window.isReleasedWhenClosed = false
         window.contentView = NSHostingView(rootView: SetupView(model: model, settings: model.settings, diagnostics: model.diagnostics))
         window.center()
@@ -232,7 +248,7 @@ struct SetupView: View {
                     .font(.headline)
             }
             .padding(.bottom, 18)
-            ForEach(SetupStep.allCases) { step in
+            ForEach(SetupStep.guide) { step in
                 Button {
                     model.step = step
                 } label: {
@@ -260,12 +276,44 @@ struct SetupView: View {
                 }
                 .buttonStyle(.plain)
             }
+            Divider().padding(.vertical, 8)
+            blocklistRow
             Spacer()
             Text("长按输入框说话，松开上屏")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
         .padding(18)
+    }
+
+    private var blocklistRow: some View {
+        let selected = model.step == .blocklist
+        let count = settings.blockedBundleIDs.count
+        return Button {
+            model.step = .blocklist
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "hand.raised.fill")
+                    .frame(width: 24, height: 24)
+                    .foregroundStyle(selected ? Color.accentColor : Color.secondary)
+                Text(SetupStep.blocklist.title)
+                    .fontWeight(selected ? .semibold : .regular)
+                    .fixedSize()
+                Spacer(minLength: 0)
+                if count > 0 {
+                    Text("\(count)")
+                        .font(.caption.monospacedDigit())
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1)
+                        .background(Capsule().fill(Color.secondary.opacity(0.18)))
+                }
+            }
+            .padding(.vertical, 6)
+            .padding(.horizontal, 8)
+            .background(RoundedRectangle(cornerRadius: 8).fill(selected ? Color.accentColor.opacity(0.12) : .clear))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 
     @ViewBuilder
@@ -275,16 +323,19 @@ struct SetupView: View {
         case .weType: WeTypeStep(model: model)
         case .hotkey: HotkeyStep(model: model, settings: settings, diagnostics: diagnostics)
         case .tryIt: TryItStep(model: model, settings: settings)
+        case .blocklist: BlocklistPage(settings: settings)
         }
     }
 
     private var footer: some View {
         HStack {
-            if let previous = SetupStep(rawValue: model.step.rawValue - 1) {
+            if let previous = model.step.previous {
                 Button("上一步") { model.step = previous }
             }
             Spacer()
-            if let next = SetupStep(rawValue: model.step.rawValue + 1) {
+            if model.step == .blocklist {
+                Button("回到设置向导") { model.step = settings.hasCompletedOnboarding ? .tryIt : .permission }
+            } else if let next = model.step.next {
                 Button("下一步") { model.step = next }
                     .keyboardShortcut(.defaultAction)
             } else {
@@ -295,7 +346,7 @@ struct SetupView: View {
     }
 }
 
-private struct StepHeader: View {
+struct StepHeader: View {
     let title: String
     let subtitle: String
 

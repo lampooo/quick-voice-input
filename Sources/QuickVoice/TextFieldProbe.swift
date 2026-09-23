@@ -60,15 +60,21 @@ final class TextFieldProbe {
                 : Result(verdict: .skip, bundleID: Bundle.main.bundleIdentifier, detail: "own window")
         }
 
+        let app = NSRunningApplication(processIdentifier: pid)
+        let bundleID = app?.bundleIdentifier
+        let rule = settings.rule(for: bundleID)
+        // Blocked apps are not looked at: no Accessibility request reaches them.
+        if rule == .never {
+            return Result(verdict: .skip, bundleID: bundleID, detail: "blocked")
+        }
+
         let appElement = AXUIElementCreateApplication(pid)
         AXUIElementSetMessagingTimeout(appElement, messagingTimeout)
         var hit = elementAt(point, in: appElement)
 
-        let app = NSRunningApplication(processIdentifier: pid)
-        let bundleID = app?.bundleIdentifier
-        switch settings.rule(for: bundleID) {
+        switch rule {
         case .never:
-            return Result(verdict: .skip, bundleID: bundleID, detail: "rule: never")
+            return Result(verdict: .skip, bundleID: bundleID, detail: "blocked")
         case .anywhere:
             if let hit, string(hit, kAXSubroleAttribute) == kAXSecureTextFieldSubrole {
                 return Result(verdict: .skip, bundleID: bundleID, detail: "password field")

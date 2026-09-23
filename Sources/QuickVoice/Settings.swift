@@ -83,13 +83,26 @@ final class AppSettings: ObservableObject {
     }
 
     func setRule(_ rule: AppRule, for bundleID: String) {
-        var rules = appRules
-        if rule == AppRules.rule(for: bundleID, overrides: [:]) {
-            rules.removeValue(forKey: bundleID)
-        } else {
-            rules[bundleID] = rule
-        }
-        appRules = rules
+        appRules = AppRules.setting(rule, for: bundleID, in: appRules)
+    }
+
+    // Blocking is the 「不触发」 rule in `appRules`; there is no second list to keep in sync.
+
+    func isBlocked(_ bundleID: String) -> Bool {
+        AppRules.isBlocked(bundleID, overrides: appRules)
+    }
+
+    func block(_ bundleID: String) {
+        guard bundleID != Bundle.main.bundleIdentifier else { return }
+        appRules = AppRules.blocking(bundleID, in: appRules)
+    }
+
+    func unblock(_ bundleID: String) {
+        appRules = AppRules.unblocking(bundleID, in: appRules)
+    }
+
+    var blockedBundleIDs: [String] {
+        AppRules.blockedBundleIDs(in: appRules)
     }
 
     private func refreshSnapshot() {

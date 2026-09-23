@@ -75,6 +75,9 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         let toggle = item(settings.enabled ? "暂停长按语音输入" : "启用长按语音输入", #selector(toggleEnabled), key: "e")
         toggle.isEnabled = trusted
         menu.addItem(toggle)
+        if let blockItem = blockToggleItem() {
+            menu.addItem(blockItem)
+        }
         menu.addItem(.separator())
 
         if trusted {
@@ -104,6 +107,8 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         autoSwitch.state = settings.autoSwitchInputSource ? .on : .off
         menu.addItem(autoSwitch)
         menu.addItem(appRuleMenu())
+        let blockedCount = settings.blockedBundleIDs.count
+        menu.addItem(item(blockedCount > 0 ? "管理屏蔽的软件（\(blockedCount) 个）…" : "管理屏蔽的软件…", #selector(showBlocklist)))
         menu.addItem(.separator())
 
         let login = item("开机自动启动", #selector(toggleLaunchAtLogin))
@@ -190,7 +195,41 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         return parent
     }
 
+    /// 「在〈当前软件〉中屏蔽」: the same `.never` rule as 「不触发（屏蔽）」 in the submenu above.
+    private func blockToggleItem() -> NSMenuItem? {
+        guard let target = menuTargetApp, let bundleID = target.bundleIdentifier else { return nil }
+        let name = target.localizedName ?? bundleID
+        guard AppRules.canChangeRule(for: bundleID) else {
+            return info("「\(name)」中始终不触发")
+        }
+        let blocked = settings.isBlocked(bundleID)
+        let entry = item(blocked ? "在「\(name)」中取消屏蔽" : "在「\(name)」中屏蔽", #selector(toggleBlockCurrentApp(_:)))
+        entry.representedObject = bundleID
+        entry.image = target.icon.map { Self.menuIcon($0) }
+        return entry
+    }
+
+    static func menuIcon(_ image: NSImage) -> NSImage {
+        let copy = image.copy() as? NSImage ?? image
+        copy.size = NSSize(width: 16, height: 16)
+        return copy
+    }
+
     // MARK: Actions
+
+    @objc private func toggleBlockCurrentApp(_ sender: NSMenuItem) {
+        guard let bundleID = sender.representedObject as? String else { return }
+        if settings.isBlocked(bundleID) {
+            settings.unblock(bundleID)
+        } else {
+            settings.block(bundleID)
+        }
+        Log.info("\(settings.isBlocked(bundleID) ? "blocked" : "unblocked") \(bundleID)")
+    }
+
+    @objc private func showBlocklist() {
+        app.showSetup(step: .blocklist)
+    }
 
     @objc private func toggleEnabled() {
         settings.enabled.toggle()
