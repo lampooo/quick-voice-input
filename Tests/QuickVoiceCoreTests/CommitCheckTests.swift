@@ -14,7 +14,16 @@ final class CommitCheckTests: XCTestCase {
     }
 
     func testTextAlreadyThereAtRelease() {
-        XCTAssertEqual(CommitCheck.evaluate(baseline: 0, samples: samples([5, 5, 5, 5, 5, 5])), .committed(added: 5, after: 0))
+        let outcome = CommitCheck.evaluate(baseline: 0, samples: samples([5, 5, 5, 5, 5, 5]))
+        XCTAssertEqual(outcome, .committed(added: 5, after: 0))
+        XCTAssertEqual(outcome.summary, "已上屏 5 个字符（松开时已出现）")
+        XCTAssertEqual(outcome.logDescription, "committed +5 chars, already there at release")
+    }
+
+    /// Seen with WeType in Codex: the field could no longer be read after the message was sent.
+    func testRealLogSample() {
+        let outcome = CommitCheck.evaluate(baseline: 18, samples: samples([21, 21, 21, nil, nil, nil]))
+        XCTAssertEqual(outcome, .committed(added: 3, after: 0))
     }
 
     /// Input methods may rewrite the text after committing it (Doubao's polishing).

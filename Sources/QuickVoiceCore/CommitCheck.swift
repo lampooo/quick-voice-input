@@ -28,6 +28,8 @@ public enum CommitCheck {
 
         public var summary: String {
             switch self {
+            case let .committed(added, after) where after == 0:
+                return "已上屏 \(added) 个字符（松开时已出现）"
             case let .committed(added, after):
                 return "已上屏 \(added) 个字符（松开后 \(Self.seconds(after)) 秒）"
             case let .changed(delta, after):
@@ -41,6 +43,7 @@ public enum CommitCheck {
 
         public var logDescription: String {
             switch self {
+            case let .committed(added, after) where after == 0: return "committed +\(added) chars, already there at release"
             case let .committed(added, after): return "committed +\(added) chars, \(Self.seconds(after))s after release"
             case let .changed(delta, after): return "changed by \(delta) chars, \(Self.seconds(after))s after release"
             case let .unchanged(waited): return "no new text within \(Self.seconds(waited))s"

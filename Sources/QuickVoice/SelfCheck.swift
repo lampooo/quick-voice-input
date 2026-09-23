@@ -101,7 +101,7 @@ enum SelfCheck {
         guard let tap = imeTaps.first else {
             return "没有发现事件监听（它在自己是当前输入法时，通过系统输入法接口接收按键）"
         }
-        let point = tap.tapPoint == .cghidEventTap ? "HID 层" : "会话层"
+        let point = tap.tapPoint == .cghidEventTap ? " HID 层" : "会话层"
         let mode = tap.options == .listenOnly ? "只监听" : "可拦截"
         return "在\(point)监听按键（\(mode)，\(tap.enabled ? "已启用" : "已停用")）"
     }
