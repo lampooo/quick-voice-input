@@ -207,15 +207,12 @@ final class EventTap {
         }
     }
 
-    /// The window the window server will deliver this mouse event to (0 when not provided).
+    /// The window that can handle this mouse event (kCGMouseEventWindowUnderMousePointer-
+    /// ThatCanHandleThisEvent), or 0. The plain "window under the pointer" field is not used: it
+    /// can name click-through overlays such as the Dock's full-screen window.
     private static func targetWindowNumber(of event: CGEvent) -> Int {
-        for raw: UInt32 in [92, 91] {
-            if let field = CGEventField(rawValue: raw) {
-                let number = Int(event.getIntegerValueField(field))
-                if number > 0 { return number }
-            }
-        }
-        return 0
+        guard let field = CGEventField(rawValue: 92) else { return 0 }
+        return max(0, Int(event.getIntegerValueField(field)))
     }
 
     private func apply(_ effects: [MachineEffect]) {

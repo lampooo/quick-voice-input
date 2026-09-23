@@ -48,8 +48,11 @@ final class TextFieldProbe {
 
     private func evaluate(_ point: CGPoint, windowNumber: Int) -> Result {
         deadline = ProcessInfo.processInfo.systemUptime + budget
-        let targetPID = Self.ownerPID(ofWindow: windowNumber) ?? Self.topWindowOwner(at: point)
-        guard let pid = targetPID else { return Result(verdict: .skip, bundleID: nil, detail: "no app under pointer") }
+        let eventTarget = Self.ownerPID(ofWindow: windowNumber)
+        let via = eventTarget == nil ? "window list" : "event window"
+        guard let pid = eventTarget ?? Self.topWindowOwner(at: point) else {
+            return Result(verdict: .skip, bundleID: nil, detail: "no app under pointer")
+        }
         // Never query ourselves through Accessibility: see OwnTestFields.
         if pid == ownPID {
             return OwnTestFields.shared.contains(point)
@@ -101,9 +104,9 @@ final class TextFieldProbe {
         // system I-beam over text inputs. Apps with an accessibility tree never take this path, because
         // browsers and editors show the I-beam over any selectable text.
         if hit == nil, isIBeamCursor() {
-            return Result(verdict: .trigger, bundleID: bundleID, detail: "no accessibility, I-beam cursor")
+            return Result(verdict: .trigger, bundleID: bundleID, detail: "no accessibility, I-beam cursor, target from \(via)")
         }
-        return Result(verdict: .skip, bundleID: bundleID, detail: hit == nil ? "no accessibility element" : "not editable: " + trail.joined(separator: "<"))
+        return Result(verdict: .skip, bundleID: bundleID, detail: hit == nil ? "no accessibility element, target from \(via)" : "not editable: " + trail.joined(separator: "<"))
     }
 
     private enum FieldKind { case editable, secure, readOnly }
@@ -256,13 +259,31 @@ final class TextFieldProbe {
     /// Owner of the frontmost visible window under the point (window server only, no Accessibility).
     static func topWindowOwner(at point: CGPoint) -> pid_t? {
         guard let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] else { return nil }
+        let displays = displayBounds()
         for info in list {
             guard let bounds = info[kCGWindowBounds as String] as? NSDictionary,
                   let rect = CGRect(dictionaryRepresentation: bounds), rect.contains(point),
                   let owner = info[kCGWindowOwnerPID as String] as? Int,
                   (info[kCGWindowAlpha as String] as? Double ?? 1) >= 0.01 else { continue }
+            // Screen-sized windows above the normal level (the Dock keeps one over the whole
+            // display) let clicks through; they report alpha 1 but are not click targets.
+            let layer = info[kCGWindowLayer as String] as? Int ?? 0
+            if layer > 0, displays.contains(where: { Self.covers(rect, $0) }) { continue }
             return pid_t(owner)
         }
         return nil
+    }
+
+    static func covers(_ window: CGRect, _ display: CGRect) -> Bool {
+        window.insetBy(dx: -2, dy: -2).contains(display)
+    }
+
+    /// Display frames in CoreGraphics global coordinates (thread-safe, unlike NSScreen).
+    static func displayBounds() -> [CGRect] {
+        var count: UInt32 = 0
+        guard CGGetActiveDisplayList(0, nil, &count) == .success, count > 0 else { return [] }
+        var ids = [CGDirectDisplayID](repeating: 0, count: Int(count))
+        guard CGGetActiveDisplayList(count, &ids, &count) == .success else { return [] }
+        return ids.prefix(Int(count)).map(CGDisplayBounds)
     }
 }
