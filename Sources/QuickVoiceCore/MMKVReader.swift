@@ -1,10 +1,12 @@
 import Foundation
 
-/// Read-only decoder for unencrypted MMKV files (the key-value store WeType keeps its settings in).
+/// Read-only decoder for unencrypted MMKV files (the key-value store WeType and Doubao IME keep
+/// their settings in).
 ///
 /// Layout: a little-endian UInt32 with the used length, then an append-only log of
 /// `varint(keyLength) key varint(valueLength) value` records. MMKV starts the log with a
-/// placeholder varint (0x00FFFFFF). Later records override earlier ones; an empty value deletes.
+/// 4-byte placeholder varint: 0x00FFFFFF in WeType's files, other values in Doubao's. Later
+/// records override earlier ones; an empty value deletes.
 public enum MMKVReader {
     public enum ReadError: Error, Equatable {
         case tooShort
@@ -12,6 +14,9 @@ public enum MMKVReader {
     }
 
     static let itemSizeHolder: UInt64 = 0x00FF_FFFF
+    /// A key length never needs four varint bytes (that would be 2 MB), so a 4-byte first varint
+    /// is the placeholder whatever its value.
+    static let itemSizeHolderSize = 4
 
     public static func parse(_ data: Data) throws -> [String: Data] {
         let bytes = [UInt8](data)
@@ -19,7 +24,8 @@ public enum MMKVReader {
         let declared = Int(UInt32(bytes[0]) | UInt32(bytes[1]) << 8 | UInt32(bytes[2]) << 16 | UInt32(bytes[3]) << 24)
         let end = min(4 + declared, bytes.count)
         var index = 4
-        if let holder = readVarint(bytes, index, end), holder.value == itemSizeHolder {
+        if let holder = readVarint(bytes, index, end),
+           holder.value == itemSizeHolder || holder.next - index == itemSizeHolderSize {
             index = holder.next
         }
         var result: [String: Data] = [:]

@@ -186,9 +186,9 @@ public struct Hotkey: Codable, Hashable, Sendable {
         held.reduce(EventFlagBits.nonCoalesced) { $0 | $1.genericFlag | $1.deviceFlag }
     }
 
-    /// Builds a hotkey from WeType's stored key codes. Returns nil when the combination
-    /// cannot be synthesized with CGEventPost (Fn, Caps Lock, several ordinary keys).
-    public init?(weTypeKeyCodes codes: [Int]) {
+    /// Builds a hotkey from the physical key codes an input method stored. Returns nil when the
+    /// combination cannot be synthesized with CGEventPost (Fn, Caps Lock, several ordinary keys).
+    public init?(physicalKeyCodes codes: [Int]) {
         guard !codes.isEmpty else { return nil }
         var modifiers: [ModifierKey] = []
         var key: UInt16?

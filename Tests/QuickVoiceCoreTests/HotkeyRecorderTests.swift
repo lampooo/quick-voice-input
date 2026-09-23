@@ -87,30 +87,31 @@ final class HotkeyRiskAndResolverTests: XCTestCase {
         XCTAssertEqual(Hotkey(modifiers: [], key: 105).risks, [.mayTriggerShortcut("F13")])
     }
 
-    private func config(_ shortcut: WeTypeShortcut?) -> WeTypeVoiceConfig {
-        WeTypeVoiceConfig(version: "2.2.3(657)", pushToTalk: shortcut)
+    private func config(_ shortcut: VoiceShortcut?) -> IMEVoiceConfig {
+        IMEVoiceConfig(version: "2.2.3(657)", pushToTalk: shortcut)
     }
 
     func testManualIgnoresWeType() {
         let manual = Hotkey(modifiers: [.rightCommand])
-        let result = HotkeyResolver.resolve(source: .manual, manual: manual, weType: config(WeTypeShortcut(keyCodes: [58, 49])))
+        let result = HotkeyResolver.resolve(source: .manual, manual: manual, weType: config(VoiceShortcut(keyCodes: [58, 49])))
         XCTAssertEqual(result, HotkeyResolution(hotkey: manual, followsWeType: false))
     }
 
     func testFollowUsesWeTypeShortcut() {
         let result = HotkeyResolver.resolve(source: .followWeType, manual: HotkeyPreset.rightOption.hotkey,
-                                            weType: config(WeTypeShortcut(keyCodes: [58, 49], modifierFlags: 524_288, tapCount: 1, enabled: true)))
+                                            weType: config(VoiceShortcut(keyCodes: [58, 49], modifierFlags: 524_288, tapCount: 1, enabled: true)))
         XCTAssertEqual(result, HotkeyResolution(hotkey: Hotkey(modifiers: [.leftOption], key: 49), followsWeType: true))
     }
 
     func testFollowFallsBackWhenWeTypeCannotBeSynthesized() {
         let manual = HotkeyPreset.rightOption.hotkey
-        let cases: [WeTypeVoiceConfig?] = [
+        let cases: [IMEVoiceConfig?] = [
             nil,
             config(nil),
-            config(WeTypeShortcut(keyCodes: [63])),
-            config(WeTypeShortcut(keyCodes: [61], tapCount: 2)),
-            config(WeTypeShortcut(keyCodes: [61], enabled: false)),
+            config(VoiceShortcut(keyCodes: [])),
+            config(VoiceShortcut(keyCodes: [63])),
+            config(VoiceShortcut(keyCodes: [61], tapCount: 2)),
+            config(VoiceShortcut(keyCodes: [61], enabled: false)),
         ]
         for weType in cases {
             let result = HotkeyResolver.resolve(source: .followWeType, manual: manual, weType: weType)

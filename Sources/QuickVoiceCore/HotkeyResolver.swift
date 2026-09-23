@@ -23,7 +23,7 @@ public struct HotkeyResolution: Equatable, Sendable {
 }
 
 public enum HotkeyResolver {
-    public static func resolve(source: HotkeySource, manual: Hotkey, weType: WeTypeVoiceConfig?) -> HotkeyResolution {
+    public static func resolve(source: HotkeySource, manual: Hotkey, weType: IMEVoiceConfig?) -> HotkeyResolution {
         guard source == .followWeType else {
             return HotkeyResolution(hotkey: manual, followsWeType: false)
         }
@@ -34,6 +34,10 @@ public enum HotkeyResolver {
         guard let shortcut = weType.pushToTalk else {
             return HotkeyResolution(hotkey: manual, followsWeType: false,
                                     fallbackReason: "微信输入法没有记录「按住说话」快捷键（默认是 Fn，程序无法模拟）" + fallback)
+        }
+        if shortcut.isCleared {
+            return HotkeyResolution(hotkey: manual, followsWeType: false,
+                                    fallbackReason: "微信输入法的「按住说话」快捷键是空的，请先在微信输入法里设置它" + fallback)
         }
         if shortcut.enabled == false {
             return HotkeyResolution(hotkey: manual, followsWeType: false,

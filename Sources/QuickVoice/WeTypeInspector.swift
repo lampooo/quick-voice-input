@@ -8,16 +8,16 @@ import QuickVoiceCore
 final class WeTypeConfigCache {
     static let shared = WeTypeConfigCache()
 
-    let url = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(WeTypeVoiceConfig.settingsRelativePath)
+    let url = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(WeTypeSettings.relativePath)
     private let lock = NSLock()
     private var cachedData: Data?
-    private var cached: Result<WeTypeVoiceConfig, Error>?
+    private var cached: Result<IMEVoiceConfig, Error>?
 
-    func current() -> WeTypeVoiceConfig? {
+    func current() -> IMEVoiceConfig? {
         try? load().get()
     }
 
-    func load() -> Result<WeTypeVoiceConfig, Error> {
+    func load() -> Result<IMEVoiceConfig, Error> {
         // A plain read, not a memory map: WeType may resize the file while we look at it.
         let data: Data
         do {
@@ -28,7 +28,7 @@ final class WeTypeConfigCache {
         lock.lock()
         defer { lock.unlock() }
         if let cached, data == cachedData { return cached }
-        let result = Result { WeTypeVoiceConfig.parse(try MMKVReader.parse(data)) }
+        let result = Result { try IMEVoiceConfig.parse(data, format: .weTypeMMKV) }
         cached = result
         cachedData = data
         return result
@@ -41,7 +41,7 @@ struct WeTypeStatus: Equatable {
     var version: String?
     var isEnabled = false
     var isCurrent = false
-    var voice: WeTypeVoiceConfig?
+    var voice: IMEVoiceConfig?
     var settingsError: String?
 
     var isInstalled: Bool { appURL != nil }

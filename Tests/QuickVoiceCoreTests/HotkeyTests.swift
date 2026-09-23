@@ -54,15 +54,16 @@ final class HotkeyTests: XCTestCase {
         XCTAssertEqual(KeyNames.name(for: 999), "键码 999")
     }
 
-    func testFromWeTypeKeyCodes() {
-        XCTAssertEqual(Hotkey(weTypeKeyCodes: [58, 49]), Hotkey(modifiers: [.leftOption], key: 49))
-        XCTAssertEqual(Hotkey(weTypeKeyCodes: [61]), Hotkey(modifiers: [.rightOption]))
-        XCTAssertNil(Hotkey(weTypeKeyCodes: [63]), "Fn cannot be synthesized")
-        XCTAssertNil(Hotkey(weTypeKeyCodes: [63, 49]))
-        XCTAssertNil(Hotkey(weTypeKeyCodes: [57]))
-        XCTAssertNil(Hotkey(weTypeKeyCodes: [0, 1]), "two ordinary keys")
-        XCTAssertNil(Hotkey(weTypeKeyCodes: []))
-        XCTAssertNil(Hotkey(weTypeKeyCodes: [61, 61]))
+    func testFromPhysicalKeyCodes() {
+        XCTAssertEqual(Hotkey(physicalKeyCodes: [58, 49]), Hotkey(modifiers: [.leftOption], key: 49))
+        XCTAssertEqual(Hotkey(physicalKeyCodes: [61]), Hotkey(modifiers: [.rightOption]))
+        XCTAssertEqual(Hotkey(physicalKeyCodes: [54]), Hotkey(modifiers: [.rightCommand]))
+        XCTAssertNil(Hotkey(physicalKeyCodes: [63]), "Fn cannot be synthesized")
+        XCTAssertNil(Hotkey(physicalKeyCodes: [63, 49]))
+        XCTAssertNil(Hotkey(physicalKeyCodes: [57]))
+        XCTAssertNil(Hotkey(physicalKeyCodes: [0, 1]), "two ordinary keys")
+        XCTAssertNil(Hotkey(physicalKeyCodes: []))
+        XCTAssertNil(Hotkey(physicalKeyCodes: [61, 61]))
     }
 
     func testMatchesIsOrderInsensitive() {
