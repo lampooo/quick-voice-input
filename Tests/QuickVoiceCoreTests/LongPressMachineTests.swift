@@ -15,8 +15,14 @@ final class LongPressMachineTests: XCTestCase {
         var machine = LongPressMachine()
         let output = machine.mouseDown(at: origin, time: 10, clickCount: 1, modifierFlags: EventFlagBits.nonCoalesced, enabled: true)
         XCTAssertEqual(output.disposition, .pass)
-        XCTAssertEqual(output.effects, [.startProbe(pressID: 1, at: origin), .scheduleCheck(pressID: 1, at: 10.5)])
+        XCTAssertEqual(output.effects, [.startProbe(pressID: 1, at: origin, delay: 0.15), .scheduleCheck(pressID: 1, at: 10.5)])
         XCTAssertEqual(machine.state, .pressing(origin: origin, startedAt: 10))
+    }
+
+    func testProbeDelayIsCappedByShortHoldDuration() {
+        var machine = LongPressMachine(config: LongPressConfig(holdDuration: 0.2))
+        let output = machine.mouseDown(at: origin, time: 10, clickCount: 1, modifierFlags: 0, enabled: true)
+        XCTAssertEqual(output.effects.first, .startProbe(pressID: 1, at: origin, delay: 0.1))
     }
 
     func testDisabledPassesThrough() {

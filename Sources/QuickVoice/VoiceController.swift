@@ -34,13 +34,13 @@ final class VoiceController: EventTapDelegate {
 
     // MARK: EventTapDelegate
 
-    func eventTapDidBeginRecording() {
+    func eventTapDidBeginRecording(at point: CGPoint) {
         stateLock.lock()
         generation += 1
         let current = generation
         endRequested = false
         stateLock.unlock()
-        queue.async { [weak self] in self?.begin(generation: current) }
+        queue.async { [weak self] in self?.begin(generation: current, at: point) }
     }
 
     func eventTapDidEndRecording() {
@@ -61,8 +61,9 @@ final class VoiceController: EventTapDelegate {
 
     // MARK: Voice queue
 
-    private func begin(generation current: Int) {
+    private func begin(generation current: Int, at point: CGPoint) {
         let snapshot = settings.snapshot
+        watchButtonState = ensureButtonStillDown(at: point, generation: current)
         var settle: useconds_t = 60_000
         if snapshot.autoSwitchInputSource {
             let switched = DispatchQueue.main.sync { () -> Bool in
@@ -75,13 +76,6 @@ final class VoiceController: EventTapDelegate {
             }
         }
         usleep(settle)
-
-        // The user is holding the button right now, so a "not pressed" reading means this
-        // state query cannot be trusted and the watchdog must rely on the real mouse-up only.
-        watchButtonState = CGEventSource.buttonState(.hidSystemState, button: .left)
-        if !watchButtonState {
-            Log.info("HID button state reads 'up' while holding; watchdog uses max duration only")
-        }
 
         stateLock.lock()
         let abort = endRequested || current != generation
@@ -100,6 +94,26 @@ final class VoiceController: EventTapDelegate {
         startWatchdog()
         recordingNotified = true
         notify(true)
+    }
+
+    /// The user is holding the button while this runs. If the synthetic mouse-up cleared the
+    /// HID button state, the real release would be dropped, so the state is restored first.
+    /// Returns whether the watchdog can trust the HID button state.
+    private func ensureButtonStillDown(at point: CGPoint, generation current: Int) -> Bool {
+        usleep(30_000)
+        if CGEventSource.buttonState(.hidSystemState, button: .left) { return true }
+        guard !shouldAbort(current) else { return false }
+        keySynth.restoreButtonDown(at: point)
+        usleep(30_000)
+        let restored = CGEventSource.buttonState(.hidSystemState, button: .left)
+        Log.info("HID button state was cleared by the synthetic mouse-up; restore \(restored ? "succeeded" : "failed")")
+        return restored
+    }
+
+    private func shouldAbort(_ current: Int) -> Bool {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        return endRequested || current != generation
     }
 
     private func end(reason: String) {

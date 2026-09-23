@@ -3,8 +3,8 @@ import Foundation
 import QuickVoiceCore
 
 protocol EventTapDelegate: AnyObject {
-    /// Called on the tap thread right after the synthetic mouse-up has been posted.
-    func eventTapDidBeginRecording()
+    /// Called on the tap thread right after the synthetic mouse-up has been posted at `point`.
+    func eventTapDidBeginRecording(at point: CGPoint)
     /// Called on the tap thread when the real mouse-up arrived (or the press was abandoned).
     func eventTapDidEndRecording()
 }
@@ -34,6 +34,9 @@ final class EventTap {
 
     private let verdictLock = NSLock()
     private var verdicts: [Int: ProbeVerdict] = [:]
+    private var results: [Int: TextFieldProbe.Result] = [:]
+    /// Tap-thread only: target window of the current mouse-down.
+    private var pressWindowNumber = 0
 
     init(settings: AppSettings, probe: TextFieldProbe, keySynth: KeySynth) {
         self.settings = settings
@@ -95,12 +98,9 @@ final class EventTap {
 
     private final class ResultBox { var ok = false }
 
-    /// NSEventTypePressure: Force Touch pressure changes that follow a trackpad click.
-    private static let pressureEventType: UInt32 = 34
-
     private func installTap() -> Bool {
         let types: [CGEventType] = [.leftMouseDown, .leftMouseUp, .leftMouseDragged]
-        let mask = types.reduce(CGEventMask(1) << Self.pressureEventType) { $0 | (CGEventMask(1) << $1.rawValue) }
+        let mask = types.reduce(CGEventMask(0)) { $0 | (CGEventMask(1) << $1.rawValue) }
         guard let port = CGEvent.tapCreate(
             tap: .cgSessionEventTap,
             place: .headInsertEventTap,
@@ -166,12 +166,11 @@ final class EventTap {
         case .leftMouseDown, .leftMouseUp, .leftMouseDragged:
             break
         default:
-            // Pressing harder on a Force Touch trackpad while talking must not trigger Look Up.
-            if type.rawValue == Self.pressureEventType, machine.state == .recording { return nil }
             return Unmanaged.passUnretained(event)
         }
         if event.getIntegerValueField(.eventSourceUserData) == KeySynth.syntheticMarker {
-            return Unmanaged.passUnretained(event)
+            // Our own mouse-downs only re-sync the HID button state and must never reach an app.
+            return type == .leftMouseDown ? nil : Unmanaged.passUnretained(event)
         }
 
         let now = ProcessInfo.processInfo.systemUptime
@@ -180,6 +179,7 @@ final class EventTap {
         case .leftMouseDown:
             let snapshot = settings.snapshot
             machine.config.holdDuration = snapshot.holdDuration
+            pressWindowNumber = Self.targetWindowNumber(of: event)
             output = machine.mouseDown(
                 at: event.location,
                 time: now,
@@ -207,23 +207,36 @@ final class EventTap {
         }
     }
 
+    /// The window the window server will deliver this mouse event to (0 when not provided).
+    private static func targetWindowNumber(of event: CGEvent) -> Int {
+        for raw: UInt32 in [92, 91] {
+            if let field = CGEventField(rawValue: raw) {
+                let number = Int(event.getIntegerValueField(field))
+                if number > 0 { return number }
+            }
+        }
+        return 0
+    }
+
     private func apply(_ effects: [MachineEffect]) {
         for effect in effects {
             switch effect {
-            case let .startProbe(id, point):
+            case let .startProbe(id, point, delay):
                 setVerdict(.pending, for: id)
-                probe.probe(at: point) { [weak self] result in
-                    self?.setVerdict(result.verdict, for: id)
+                probe.probe(at: point, windowNumber: pressWindowNumber, after: delay, isStillPressed: { [weak self] in
+                    self?.verdict(for: id) == .pending
+                }) { [weak self] result in
+                    self?.setResult(result, for: id)
                 }
             case let .scheduleCheck(id, time):
                 scheduleCheck(id: id, at: time)
             case .cancelCheck:
                 cancelCheck()
+                cancelProbe(for: machine.pressID)
             case let .beginRecording(point):
                 cancelCheck()
                 keySynth.postMouseUp(at: point)
-                Log.info("long press triggered")
-                delegate?.eventTapDidBeginRecording()
+                delegate?.eventTapDidBeginRecording(at: point)
             case .endRecording:
                 delegate?.eventTapDidEndRecording()
             }
@@ -248,13 +261,42 @@ final class EventTap {
     private func fireCheck(id: Int) {
         checkTimer = nil
         let output = machine.checkDue(pressID: id, time: ProcessInfo.processInfo.systemUptime, verdict: verdict(for: id))
+        if output.effects.contains(where: { if case .beginRecording = $0 { return true } else { return false } }) {
+            Log.info("long press in \(describeResult(for: id)) -> trigger")
+        } else if machine.state == .idle {
+            Log.info("long press in \(describeResult(for: id)) -> skip")
+        }
         apply(output.effects)
+    }
+
+    private func describeResult(for id: Int) -> String {
+        verdictLock.lock()
+        defer { verdictLock.unlock() }
+        guard let result = results[id] else { return "? (probe did not finish in time)" }
+        return "\(result.bundleID ?? "?") (\(result.detail), \(result.elapsedMilliseconds)ms)"
     }
 
     private func setVerdict(_ verdict: ProbeVerdict, for id: Int) {
         verdictLock.lock()
         verdicts[id] = verdict
         verdicts = verdicts.filter { $0.key > id - 8 }
+        results = results.filter { $0.key > id - 8 }
+        verdictLock.unlock()
+    }
+
+    private func setResult(_ result: TextFieldProbe.Result, for id: Int) {
+        verdictLock.lock()
+        if verdicts[id] == .pending {
+            verdicts[id] = result.verdict
+            results[id] = result
+        }
+        verdictLock.unlock()
+    }
+
+    /// A released or dragged press does not need its probe any more.
+    private func cancelProbe(for id: Int) {
+        verdictLock.lock()
+        if verdicts[id] == .pending { verdicts[id] = .skip }
         verdictLock.unlock()
     }
 

@@ -10,18 +10,25 @@ public struct LongPressConfig: Equatable, Sendable {
     public var maxProbeWait: TimeInterval
     /// Interval between re-checks while the probe is still running.
     public var probeRecheckInterval: TimeInterval
+    /// The event tap sees a mouse-down before the target app does, so the probe waits until
+    /// the click has moved focus into the field (capped at half the hold duration).
+    public var probeDelay: TimeInterval
 
     public init(
         holdDuration: TimeInterval = 0.5,
         moveTolerance: Double = 5,
         maxProbeWait: TimeInterval = 0.4,
-        probeRecheckInterval: TimeInterval = 0.05
+        probeRecheckInterval: TimeInterval = 0.05,
+        probeDelay: TimeInterval = 0.15
     ) {
         self.holdDuration = holdDuration
         self.moveTolerance = moveTolerance
         self.maxProbeWait = maxProbeWait
         self.probeRecheckInterval = probeRecheckInterval
+        self.probeDelay = probeDelay
     }
+
+    public var effectiveProbeDelay: TimeInterval { min(probeDelay, holdDuration / 2) }
 
     public static let holdDurationChoices: [TimeInterval] = [0.3, 0.5, 0.8, 1.2]
 }
@@ -42,8 +49,8 @@ public enum EventDisposition: Equatable, Sendable {
 }
 
 public enum MachineEffect: Equatable, Sendable {
-    /// Ask the text-field probe whether a long press at this point may start voice input.
-    case startProbe(pressID: Int, at: CGPoint)
+    /// Ask the text-field probe, after `delay`, whether a long press here may start voice input.
+    case startProbe(pressID: Int, at: CGPoint, delay: TimeInterval)
     /// Call `checkDue(pressID:time:verdict:)` at the given time.
     case scheduleCheck(pressID: Int, at: TimeInterval)
     case cancelCheck
@@ -95,7 +102,7 @@ public struct LongPressMachine: Sendable {
         pressID &+= 1
         state = .pressing(origin: point, startedAt: time)
         lastPoint = point
-        effects.append(.startProbe(pressID: pressID, at: point))
+        effects.append(.startProbe(pressID: pressID, at: point, delay: config.effectiveProbeDelay))
         effects.append(.scheduleCheck(pressID: pressID, at: time + config.holdDuration))
         return MachineOutput(disposition: .pass, effects: effects)
     }

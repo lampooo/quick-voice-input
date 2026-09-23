@@ -2,20 +2,21 @@ import AppKit
 import ApplicationServices
 import QuickVoiceCore
 
-/// Decides, via the Accessibility API, whether a long press at a screen point is inside an
-/// editable text field. Runs on its own queue so AX round-trips never block the event tap.
+/// Decides whether a long press at a screen point is inside an editable text field. Runs on its
+/// own queue so Accessibility round-trips never block the event tap.
 final class TextFieldProbe {
     struct Result {
         var verdict: ProbeVerdict
         var bundleID: String?
         var detail: String
+        var elapsedMilliseconds = 0
     }
 
     private let queue = DispatchQueue(label: "quickvoice.probe", qos: .userInteractive)
-    private let systemWide = AXUIElementCreateSystemWide()
     private let settings: AppSettings
     private let messagingTimeout: Float = 0.25
-    private var manualAccessibilityPIDs = Set<pid_t>()
+    private let ownPID = getpid()
+    private var accessibilityEnabledPIDs = Set<pid_t>()
     private var chromiumBundleCache: [String: Bool] = [:]
     private var deadline: TimeInterval = 0
     private let budget: TimeInterval = 0.7
@@ -29,28 +30,36 @@ final class TextFieldProbe {
 
     init(settings: AppSettings) {
         self.settings = settings
-        AXUIElementSetMessagingTimeout(systemWide, messagingTimeout)
     }
 
-    func probe(at point: CGPoint, completion: @escaping (Result) -> Void) {
-        queue.async { [self] in
+    /// Runs after `delay`; skipped when `isStillPressed` says the press already ended.
+    /// `windowNumber` is the window the window server routed the mouse-down to (0 if unknown).
+    func probe(at point: CGPoint, windowNumber: Int, after delay: TimeInterval, isStillPressed: @escaping () -> Bool, completion: @escaping (Result) -> Void) {
+        queue.asyncAfter(deadline: .now() + delay) { [self] in
+            guard isStillPressed() else { return }
             let started = ProcessInfo.processInfo.systemUptime
-            let result = evaluate(point)
-            let elapsed = Int((ProcessInfo.processInfo.systemUptime - started) * 1000)
-            Log.info("probe \(result.bundleID ?? "?") -> \(result.verdict) (\(result.detail)) \(elapsed)ms")
+            var result = evaluate(point, windowNumber: windowNumber)
+            result.elapsedMilliseconds = Int((ProcessInfo.processInfo.systemUptime - started) * 1000)
             completion(result)
         }
     }
 
     private var outOfTime: Bool { ProcessInfo.processInfo.systemUptime > deadline }
 
-    private func evaluate(_ point: CGPoint) -> Result {
+    private func evaluate(_ point: CGPoint, windowNumber: Int) -> Result {
         deadline = ProcessInfo.processInfo.systemUptime + budget
-        var hit = elementAt(point, in: systemWide)
-        var pid: pid_t = 0
-        if let hit { AXUIElementGetPid(hit, &pid) }
-        if pid == 0 { pid = Self.windowOwner(at: point) ?? 0 }
-        guard pid != 0 else { return Result(verdict: .skip, bundleID: nil, detail: "no app under pointer") }
+        let targetPID = Self.ownerPID(ofWindow: windowNumber) ?? Self.topWindowOwner(at: point)
+        guard let pid = targetPID else { return Result(verdict: .skip, bundleID: nil, detail: "no app under pointer") }
+        // Never query ourselves through Accessibility: see OwnTestFields.
+        if pid == ownPID {
+            return OwnTestFields.shared.contains(point)
+                ? Result(verdict: .trigger, bundleID: Bundle.main.bundleIdentifier, detail: "own test field")
+                : Result(verdict: .skip, bundleID: Bundle.main.bundleIdentifier, detail: "own window")
+        }
+
+        let appElement = AXUIElementCreateApplication(pid)
+        AXUIElementSetMessagingTimeout(appElement, messagingTimeout)
+        var hit = elementAt(point, in: appElement)
 
         let app = NSRunningApplication(processIdentifier: pid)
         let bundleID = app?.bundleIdentifier
@@ -66,16 +75,14 @@ final class TextFieldProbe {
             break
         }
 
-        let appElement = AXUIElementCreateApplication(pid)
-        AXUIElementSetMessagingTimeout(appElement, messagingTimeout)
-        if enableManualAccessibilityIfNeeded(pid: pid, app: app, appElement: appElement) {
+        if enableAccessibilityIfNeeded(pid: pid, app: app, appElement: appElement) {
             usleep(180_000)
             hit = elementAt(point, in: appElement)
         }
 
         var trail: [String] = []
         if let hit {
-            switch classifyAncestors(of: hit, trail: &trail) {
+            switch classifyAncestors(of: hit, at: point, trail: &trail) {
             case .editable: return Result(verdict: .trigger, bundleID: bundleID, detail: trail.joined(separator: "<"))
             case .secure: return Result(verdict: .skip, bundleID: bundleID, detail: "password field")
             case .readOnly, .none: break
@@ -90,22 +97,43 @@ final class TextFieldProbe {
                 return Result(verdict: .trigger, bundleID: bundleID, detail: "focused " + focusedTrail.joined())
             }
         }
-        return Result(verdict: .skip, bundleID: bundleID, detail: "not editable: " + trail.joined(separator: "<"))
+        // Apps that expose nothing at all under the pointer (WeChat's content area) still show the
+        // system I-beam over text inputs. Apps with an accessibility tree never take this path, because
+        // browsers and editors show the I-beam over any selectable text.
+        if hit == nil, isIBeamCursor() {
+            return Result(verdict: .trigger, bundleID: bundleID, detail: "no accessibility, I-beam cursor")
+        }
+        return Result(verdict: .skip, bundleID: bundleID, detail: hit == nil ? "no accessibility element" : "not editable: " + trail.joined(separator: "<"))
     }
 
     private enum FieldKind { case editable, secure, readOnly }
 
-    private func classifyAncestors(of element: AXUIElement, trail: inout [String]) -> FieldKind? {
+    private func classifyAncestors(of element: AXUIElement, at point: CGPoint, trail: inout [String]) -> FieldKind? {
         var current: AXUIElement? = element
         var depth = 0
         while let node = current, depth < 6, !outOfTime {
             if let kind = classify(node, trail: &trail) { return kind }
             let role = string(node, kAXRoleAttribute)
+            if role == kAXScrollAreaRole, depth == 0, let child = editableChild(of: node, containing: point) {
+                trail.append("child")
+                return classify(child, trail: &trail)
+            }
             if role == kAXWindowRole || role == kAXApplicationRole || role == "AXWebArea" { return nil }
             current = copyElement(node, kAXParentAttribute)
             depth += 1
         }
         return nil
+    }
+
+    /// A click in the padding of a scrolling text view hits the scroll area, not the text itself.
+    private func editableChild(of scrollArea: AXUIElement, containing point: CGPoint) -> AXUIElement? {
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(scrollArea, kAXChildrenAttribute as CFString, &value) == .success,
+              let children = value as? [AXUIElement] else { return nil }
+        return children.prefix(8).first { child in
+            guard let role = string(child, kAXRoleAttribute), Self.textRoles.contains(role) else { return false }
+            return frame(of: child)?.contains(point) == true
+        }
     }
 
     private func classify(_ element: AXUIElement, trail: inout [String]) -> FieldKind? {
@@ -124,12 +152,19 @@ final class TextFieldProbe {
     }
 
     /// Chromium and Electron only build their accessibility tree when an assistive app asks.
-    private func enableManualAccessibilityIfNeeded(pid: pid_t, app: NSRunningApplication?, appElement: AXUIElement) -> Bool {
-        guard !manualAccessibilityPIDs.contains(pid), isChromiumBased(app) else { return false }
-        manualAccessibilityPIDs.insert(pid)
-        let status = AXUIElementSetAttributeValue(appElement, "AXManualAccessibility" as CFString, kCFBooleanTrue)
-        Log.info("AXManualAccessibility on \(app?.bundleIdentifier ?? "\(pid)") -> \(status.rawValue)")
-        return status == .success
+    /// Electron understands AXManualAccessibility; Chrome and Edge need AXEnhancedUserInterface.
+    private func enableAccessibilityIfNeeded(pid: pid_t, app: NSRunningApplication?, appElement: AXUIElement) -> Bool {
+        guard !accessibilityEnabledPIDs.contains(pid), isChromiumBased(app) else { return false }
+        accessibilityEnabledPIDs.insert(pid)
+        let name = app?.bundleIdentifier ?? "\(pid)"
+        let manual = AXUIElementSetAttributeValue(appElement, "AXManualAccessibility" as CFString, kCFBooleanTrue)
+        if manual == .success {
+            Log.info("AXManualAccessibility on \(name)")
+            return true
+        }
+        let enhanced = AXUIElementSetAttributeValue(appElement, "AXEnhancedUserInterface" as CFString, kCFBooleanTrue)
+        Log.info("AXManualAccessibility on \(name) -> \(manual.rawValue), AXEnhancedUserInterface -> \(enhanced.rawValue)")
+        return enhanced == .success
     }
 
     private func isChromiumBased(_ app: NSRunningApplication?) -> Bool {
@@ -144,6 +179,26 @@ final class TextFieldProbe {
         }
         chromiumBundleCache[bundleID] = result
         return result
+    }
+
+    /// NSCursor is main-thread only; the main thread never waits on this queue, so sync is safe.
+    private func isIBeamCursor() -> Bool {
+        DispatchQueue.main.sync {
+            guard let current = NSCursor.currentSystem else { return false }
+            return [NSCursor.iBeam, NSCursor.iBeamCursorForVerticalLayout].contains { Self.looksAlike(current, $0) }
+        }
+    }
+
+    /// Cursors are compared by shape (aspect ratio and relative hot spot) so an enlarged
+    /// accessibility pointer still matches.
+    static func looksAlike(_ a: NSCursor, _ b: NSCursor) -> Bool {
+        let sa = a.image.size
+        let sb = b.image.size
+        guard sa.width > 0, sa.height > 0, sb.width > 0, sb.height > 0 else { return false }
+        let aspect = abs(sa.width / sa.height - sb.width / sb.height)
+        let hotX = abs(a.hotSpot.x / sa.width - b.hotSpot.x / sb.width)
+        let hotY = abs(a.hotSpot.y / sa.height - b.hotSpot.y / sb.height)
+        return aspect < 0.05 && hotX < 0.08 && hotY < 0.08
     }
 
     private func elementAt(_ point: CGPoint, in root: AXUIElement) -> AXUIElement? {
@@ -191,14 +246,22 @@ final class TextFieldProbe {
         return frame.insetBy(dx: tiny ? -32 : -8, dy: tiny ? -32 : -8).contains(point)
     }
 
-    static func windowOwner(at point: CGPoint) -> pid_t? {
+    static func ownerPID(ofWindow windowNumber: Int) -> pid_t? {
+        guard windowNumber > 0,
+              let list = CGWindowListCopyWindowInfo([.optionIncludingWindow], CGWindowID(windowNumber)) as? [[String: Any]],
+              let owner = list.first?[kCGWindowOwnerPID as String] as? Int else { return nil }
+        return pid_t(owner)
+    }
+
+    /// Owner of the frontmost visible window under the point (window server only, no Accessibility).
+    static func topWindowOwner(at point: CGPoint) -> pid_t? {
         guard let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] else { return nil }
         for info in list {
-            guard let layer = info[kCGWindowLayer as String] as? Int, layer == 0,
-                  let bounds = info[kCGWindowBounds as String] as? NSDictionary,
+            guard let bounds = info[kCGWindowBounds as String] as? NSDictionary,
                   let rect = CGRect(dictionaryRepresentation: bounds), rect.contains(point),
-                  let pid = info[kCGWindowOwnerPID as String] as? Int else { continue }
-            return pid_t(pid)
+                  let owner = info[kCGWindowOwnerPID as String] as? Int,
+                  (info[kCGWindowAlpha as String] as? Double ?? 1) >= 0.01 else { continue }
+            return pid_t(owner)
         }
         return nil
     }

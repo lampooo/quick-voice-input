@@ -101,8 +101,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
             model.step = .permission
         }
         model.startRefreshing()
-        NSApp.activate(ignoringOtherApps: true)
-        window?.makeKeyAndOrderFront(nil)
+        AppActivation.bringToFront(window)
         if autoRunTest {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in self?.model.diagnostics.run() }
         }
@@ -111,6 +110,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
     func windowWillClose(_ notification: Notification) {
         model.stopRefreshing()
         model.diagnostics.cancel()
+        AppActivation.returnToMenuBar()
     }
 }
 
@@ -122,8 +122,9 @@ final class TestFieldHandle {
 
     func focus() {
         guard let textView, let window = textView.window else { return }
-        NSApp.activate(ignoringOtherApps: true)
-        window.makeKeyAndOrderFront(nil)
+        if !NSApp.isActive || !window.isKeyWindow {
+            AppActivation.bringToFront(window)
+        }
         window.makeFirstResponder(textView)
     }
 
@@ -132,10 +133,32 @@ final class TestFieldHandle {
     }
 }
 
+/// Hosts a test text field and registers it with `OwnTestFields` while it is in a window.
+final class TestFieldContainer: NSView {
+    init(content: NSView) {
+        super.init(frame: .zero)
+        content.frame = bounds
+        content.autoresizingMask = [.width, .height]
+        addSubview(content)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if window == nil {
+            OwnTestFields.shared.unregister(self)
+        } else {
+            OwnTestFields.shared.register(self)
+        }
+    }
+}
+
 struct TestTextView: NSViewRepresentable {
     let handle: TestFieldHandle
 
-    func makeNSView(context: Context) -> NSScrollView {
+    func makeNSView(context: Context) -> TestFieldContainer {
         let scrollView = NSTextView.scrollableTextView()
         scrollView.borderType = .bezelBorder
         if let textView = scrollView.documentView as? NSTextView {
@@ -146,10 +169,14 @@ struct TestTextView: NSViewRepresentable {
             textView.setAccessibilityLabel("测试输入框")
             handle.textView = textView
         }
-        return scrollView
+        return TestFieldContainer(content: scrollView)
     }
 
-    func updateNSView(_ nsView: NSScrollView, context: Context) {}
+    func updateNSView(_ nsView: TestFieldContainer, context: Context) {}
+
+    static func dismantleNSView(_ nsView: TestFieldContainer, coordinator: ()) {
+        OwnTestFields.shared.unregister(nsView)
+    }
 }
 
 // MARK: - Views
