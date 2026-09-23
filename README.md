@@ -111,6 +111,7 @@ Bundle ID：「辅助功能」授权和设置都跟着 Bundle ID 走，所以打
 swift build              # 编译
 swift test               # 运行 QuickVoiceCore 的单元测试
 ./scripts/build-app.sh   # 打包到 build/快捷语音输入.app（UNIVERSAL=1 同时编译 Intel 版）
+.build/debug/QuickVoice --render-setup /tmp/setup   # 仅 Debug 构建：离屏渲染设置向导截图，不显示窗口
 ```
 
 | 路径 | 内容 |

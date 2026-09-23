@@ -219,4 +219,16 @@ final class HotkeyDiagnostics: ObservableObject {
     private func onMain(_ block: @escaping () -> Void) {
         DispatchQueue.main.async(execute: block)
     }
+
+    #if DEBUG
+    /// Fills in sample results so layout can be checked without running the test.
+    func loadPreviewResults(weType: WeTypeStatus) {
+        candidates = Self.buildCandidates(current: settings.hotkey, weType: weType)
+        let outcomes: [HotkeyTestOutcome] = [.noResponse, .pushToTalk(latency: 0.42), .noResponse, .toggle(latency: 0.3), .micBusy]
+        for index in candidates.indices {
+            candidates[index].outcome = outcomes[index % outcomes.count]
+        }
+        finish(secureInput: true)
+    }
+    #endif
 }

@@ -76,7 +76,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
     init(model: SetupModel) {
         self.model = model
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 760, height: 560),
+            contentRect: NSRect(origin: .zero, size: SetupView.size),
             styleMask: [.titled, .closable, .miniaturizable],
             backing: .buffered,
             defer: false
@@ -166,10 +166,15 @@ struct SetupView: View {
                 .background(Color(nsColor: .windowBackgroundColor).opacity(0.6))
             Divider()
             VStack(spacing: 0) {
-                ScrollView {
-                    content
-                        .padding(28)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        content
+                            .padding(28)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .onChange(of: diagnostics.isRunning) { running in
+                        withAnimation { proxy.scrollTo(HotkeyTestSection.anchorID, anchor: running ? .top : .bottom) }
+                    }
                 }
                 Divider()
                 footer
@@ -177,8 +182,10 @@ struct SetupView: View {
                     .padding(.vertical, 14)
             }
         }
-        .frame(width: 760, height: 560)
+        .frame(width: SetupView.size.width, height: SetupView.size.height)
     }
+
+    static let size = CGSize(width: 760, height: 620)
 
     private var sidebar: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -438,7 +445,12 @@ private struct HotkeyStep: View {
             VStack(alignment: .leading, spacing: 8) {
                 StatusRow(ok: false, text: "微信输入法的「按住说话」目前是「\(weType.pushToTalkDescription)」，和这里选的不一致")
                 if let hotkey = weType.voice?.pushToTalk?.hotkey {
-                    Button("改为跟微信输入法一样：\(hotkey.displayName)") { settings.hotkey = hotkey }
+                    HStack(spacing: 4) {
+                        Text("不想改微信输入法的话，也可以").foregroundStyle(.secondary)
+                        Button("改为跟它一样：\(hotkey.displayName)") { settings.hotkey = hotkey }
+                            .buttonStyle(.link)
+                    }
+                    .font(.callout)
                 } else if weType.voice?.pushToTalk?.usesFn == true {
                     Text("Fn 无法被程序模拟，请按上面的步骤在微信输入法里改键。")
                         .font(.caption)
@@ -452,6 +464,8 @@ private struct HotkeyStep: View {
 }
 
 struct HotkeyTestSection: View {
+    static let anchorID = "hotkeyTest"
+
     @ObservedObject var diagnostics: HotkeyDiagnostics
     let testField: TestFieldHandle
 
@@ -503,6 +517,7 @@ struct HotkeyTestSection: View {
                     .buttonStyle(.borderedProminent)
             }
         }
+        .id(Self.anchorID)
     }
 
     @ViewBuilder
