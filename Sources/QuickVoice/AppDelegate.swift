@@ -83,7 +83,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Remembers the supported input method the user types with, for 「自动」. Our own switching
     /// also lands here, which is what 「最近用过」 should mean.
     @objc private func selectedInputSourceChanged() {
-        settings.noteSelectedInputSource(InputSource.currentSourceID())
+        DispatchQueue.main.async { [weak self] in
+            self?.settings.noteSelectedInputSource(InputSource.currentSourceID())
+        }
     }
 
     func enabledDidChange() {
