@@ -8,10 +8,15 @@ final class AppSettings: ObservableObject {
     struct Snapshot {
         var enabled: Bool
         var holdDuration: TimeInterval
-        var hotkeySource: HotkeySource
-        var hotkey: Hotkey
+        var voiceIME: VoiceIMEChoice
+        var imeHotkeys: [String: IMEHotkeySetting]
+        var lastVoiceIMEID: String?
         var autoSwitchInputSource: Bool
         var appRules: [String: AppRule]
+
+        func hotkeySetting(for ime: VoiceIME) -> IMEHotkeySetting {
+            imeHotkeys[ime.id] ?? .standard(for: ime)
+        }
     }
 
     static let shared = AppSettings()
@@ -19,11 +24,15 @@ final class AppSettings: ObservableObject {
     private enum Key {
         static let enabled = "enabled"
         static let holdDuration = "holdDuration"
-        static let hotkeySource = "hotkeySource"
-        static let hotkey = "hotkey"
+        static let voiceIME = "voiceIME"
+        static let imeHotkeys = "imeHotkeys"
+        static let lastVoiceIME = "lastVoiceIME"
         static let autoSwitchInputSource = "autoSwitchInputSource"
         static let appRules = "appRules"
         static let hasCompletedOnboarding = "hasCompletedOnboarding"
+        /// Written before the input method could be chosen; they describe WeType's hotkey.
+        static let legacyHotkeySource = "hotkeySource"
+        static let legacyHotkey = "hotkey"
     }
 
     private let defaults: UserDefaults
@@ -32,9 +41,12 @@ final class AppSettings: ObservableObject {
 
     @Published var enabled: Bool { didSet { persist(Key.enabled, enabled) } }
     @Published var holdDuration: TimeInterval { didSet { persist(Key.holdDuration, holdDuration) } }
-    @Published var hotkeySource: HotkeySource { didSet { persist(Key.hotkeySource, hotkeySource.rawValue) } }
-    /// The manually chosen hotkey; also the fallback when WeType's shortcut cannot be followed.
-    @Published var hotkey: Hotkey { didSet { persistJSON(Key.hotkey, hotkey) } }
+    /// 「语音输入法」: which input method does the recognition.
+    @Published var voiceIME: VoiceIMEChoice { didSet { persist(Key.voiceIME, voiceIME.storedValue) } }
+    /// Per input method; missing entries mean 「跟随」 with the input method's recommended key.
+    @Published private(set) var imeHotkeys: [String: IMEHotkeySetting] { didSet { persistJSON(Key.imeHotkeys, imeHotkeys) } }
+    /// The supported input method that was selected most recently, for 「自动」.
+    @Published private(set) var lastVoiceIMEID: String? { didSet { persist(Key.lastVoiceIME, lastVoiceIMEID) } }
     @Published var autoSwitchInputSource: Bool { didSet { persist(Key.autoSwitchInputSource, autoSwitchInputSource) } }
     @Published var appRules: [String: AppRule] { didSet { persistJSON(Key.appRules, appRules) } }
     @Published var hasCompletedOnboarding: Bool { didSet { persist(Key.hasCompletedOnboarding, hasCompletedOnboarding) } }
@@ -44,20 +56,33 @@ final class AppSettings: ObservableObject {
         let enabled = defaults.object(forKey: Key.enabled) as? Bool ?? true
         let storedDuration = defaults.object(forKey: Key.holdDuration) as? Double ?? 0.5
         let holdDuration = LongPressConfig.holdDurationChoices.contains(storedDuration) ? storedDuration : 0.5
-        let hotkey = Self.decode(Hotkey.self, defaults.data(forKey: Key.hotkey)).flatMap { $0.isValid ? $0 : nil }
-            ?? HotkeyPreset.recommended.hotkey
+        let voiceIME = VoiceIMEChoice(storedValue: defaults.string(forKey: Key.voiceIME))
+        var hotkeys = (Self.decode([String: IMEHotkeySetting].self, defaults.data(forKey: Key.imeHotkeys)) ?? [:])
+            .filter { $0.value.manual.isValid }
+        if defaults.object(forKey: Key.imeHotkeys) == nil,
+           let legacy = IMEHotkeySetting.migrated(
+               legacySource: defaults.string(forKey: Key.legacyHotkeySource),
+               legacyHotkey: Self.decode(Hotkey.self, defaults.data(forKey: Key.legacyHotkey))
+           ) {
+            hotkeys[VoiceIME.weType.id] = legacy
+            if let data = try? JSONEncoder().encode(hotkeys) {
+                defaults.set(data, forKey: Key.imeHotkeys)
+            }
+        }
+        let lastUsed = defaults.string(forKey: Key.lastVoiceIME).flatMap(VoiceIME.withID)?.id
         let autoSwitch = defaults.object(forKey: Key.autoSwitchInputSource) as? Bool ?? true
         let rules = Self.decode([String: AppRule].self, defaults.data(forKey: Key.appRules)) ?? [:]
-        let source = (defaults.string(forKey: Key.hotkeySource)).flatMap(HotkeySource.init(rawValue:)) ?? .followWeType
 
         self.enabled = enabled
         self.holdDuration = holdDuration
-        self.hotkeySource = source
-        self.hotkey = hotkey
+        self.voiceIME = voiceIME
+        self.imeHotkeys = hotkeys
+        self.lastVoiceIMEID = lastUsed
         self.autoSwitchInputSource = autoSwitch
         self.appRules = rules
         self.hasCompletedOnboarding = defaults.bool(forKey: Key.hasCompletedOnboarding)
-        cachedSnapshot = Snapshot(enabled: enabled, holdDuration: holdDuration, hotkeySource: source, hotkey: hotkey, autoSwitchInputSource: autoSwitch, appRules: rules)
+        cachedSnapshot = Snapshot(enabled: enabled, holdDuration: holdDuration, voiceIME: voiceIME, imeHotkeys: hotkeys,
+                                  lastVoiceIMEID: lastUsed, autoSwitchInputSource: autoSwitch, appRules: rules)
     }
 
     var snapshot: Snapshot {
@@ -66,16 +91,30 @@ final class AppSettings: ObservableObject {
         return cachedSnapshot
     }
 
-    /// The hotkey to hold right now. Safe on any thread.
-    func resolvedHotkey() -> HotkeyResolution {
-        let current = snapshot
-        return HotkeyResolver.resolve(source: current.hotkeySource, manual: current.hotkey, weType: WeTypeConfigCache.shared.current())
+    func hotkeySetting(for ime: VoiceIME) -> IMEHotkeySetting {
+        snapshot.hotkeySetting(for: ime)
     }
 
-    /// Switches to a manually chosen hotkey.
-    func useManualHotkey(_ hotkey: Hotkey) {
-        self.hotkey = hotkey
-        hotkeySource = .manual
+    /// The hotkey to hold right now for `ime`; reads the input method's settings file. Safe on any thread.
+    func resolvedHotkey(for ime: VoiceIME) -> HotkeyResolution {
+        HotkeyResolver.resolve(hotkeySetting(for: ime), ime: ime, config: IMEConfigCache.shared.config(for: ime))
+    }
+
+    func setHotkeySource(_ source: HotkeySource, for ime: VoiceIME) {
+        var setting = hotkeySetting(for: ime)
+        setting.source = source
+        imeHotkeys[ime.id] = setting
+    }
+
+    /// Switches `ime` to a manually chosen hotkey.
+    func useManualHotkey(_ hotkey: Hotkey, for ime: VoiceIME) {
+        imeHotkeys[ime.id] = IMEHotkeySetting(source: .manual, manual: hotkey)
+    }
+
+    /// Remembers the input method the user is typing with, for 「自动」. Main thread.
+    func noteSelectedInputSource(_ sourceID: String?) {
+        guard let ime = VoiceIME.owning(sourceID: sourceID), ime.id != lastVoiceIMEID else { return }
+        lastVoiceIMEID = ime.id
     }
 
     func rule(for bundleID: String?) -> AppRule {
@@ -107,12 +146,17 @@ final class AppSettings: ObservableObject {
 
     private func refreshSnapshot() {
         lock.lock()
-        cachedSnapshot = Snapshot(enabled: enabled, holdDuration: holdDuration, hotkeySource: hotkeySource, hotkey: hotkey, autoSwitchInputSource: autoSwitchInputSource, appRules: appRules)
+        cachedSnapshot = Snapshot(enabled: enabled, holdDuration: holdDuration, voiceIME: voiceIME, imeHotkeys: imeHotkeys,
+                                  lastVoiceIMEID: lastVoiceIMEID, autoSwitchInputSource: autoSwitchInputSource, appRules: appRules)
         lock.unlock()
     }
 
-    private func persist(_ key: String, _ value: Any) {
-        defaults.set(value, forKey: key)
+    private func persist(_ key: String, _ value: Any?) {
+        if let value {
+            defaults.set(value, forKey: key)
+        } else {
+            defaults.removeObject(forKey: key)
+        }
         refreshSnapshot()
     }
 

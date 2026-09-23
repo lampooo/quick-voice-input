@@ -1,20 +1,21 @@
 import AppKit
+import Combine
 import QuickVoiceCore
 import SwiftUI
 
 enum SetupStep: Int, CaseIterable, Identifiable {
-    case permission, weType, hotkey, tryIt
+    case permission, voiceIME, hotkey, tryIt
     /// A settings page next to the guide, not a numbered step.
     case blocklist
 
-    static let guide: [SetupStep] = [.permission, .weType, .hotkey, .tryIt]
+    static let guide: [SetupStep] = [.permission, .voiceIME, .hotkey, .tryIt]
 
     var id: Int { rawValue }
 
     var title: String {
         switch self {
         case .permission: return "授权"
-        case .weType: return "微信输入法"
+        case .voiceIME: return "语音输入法"
         case .hotkey: return "语音快捷键"
         case .tryIt: return "试一试"
         case .blocklist: return "屏蔽的软件"
@@ -35,7 +36,9 @@ enum SetupStep: Int, CaseIterable, Identifiable {
 final class SetupModel: ObservableObject {
     @Published var step: SetupStep = .permission
     @Published var axTrusted = Permissions.isAccessibilityTrusted
-    @Published var weType = WeTypeStatus.inspect()
+    @Published var statuses = IMEStatus.inspectAll()
+    /// The input method whose hotkey the 「语音快捷键」 step edits and tests.
+    @Published var editingIME: VoiceIME
 
     let settings: AppSettings
     let diagnostics: HotkeyDiagnostics
@@ -44,16 +47,36 @@ final class SetupModel: ObservableObject {
     let tryField = TestFieldHandle()
     var onFinish: (() -> Void)?
     private var timer: Timer?
+    private var cancellables = Set<AnyCancellable>()
 
     init(settings: AppSettings, diagnostics: HotkeyDiagnostics) {
         self.settings = settings
         self.diagnostics = diagnostics
+        editingIME = VoiceTarget.select(settings: settings).ime
         diagnostics.focusTestField = { [weak testField] in testField?.focus() }
         diagnostics.clearTestField = { [weak testField] in testField?.clear() }
-        recorder.onFinish = { [weak settings] hotkey in settings?.useManualHotkey(hotkey) }
+        recorder.onFinish = { [weak self] hotkey in
+            guard let self else { return }
+            self.settings.useManualHotkey(hotkey, for: self.editingIME)
+        }
+        settings.$voiceIME.dropFirst().receive(on: DispatchQueue.main).sink { [weak self] _ in
+            self?.syncEditingIME()
+        }.store(in: &cancellables)
+        syncEditingIME()
     }
 
-    var resolution: HotkeyResolution { weType.resolution(for: settings) }
+    func status(of ime: VoiceIME) -> IMEStatus { statuses.status(of: ime) }
+
+    func resolution(for ime: VoiceIME) -> HotkeyResolution { status(of: ime).resolution(for: settings) }
+
+    var hotkeyIMEs: [VoiceIME] { settings.hotkeyIMEs(statuses: statuses) }
+
+    private func syncEditingIME() {
+        let choices = hotkeyIMEs
+        guard !choices.contains(editingIME) else { return }
+        let target = VoiceTarget.select(settings: settings).ime
+        editingIME = choices.contains(target) ? target : choices[0]
+    }
 
     func startRefreshing() {
         timer?.invalidate()
@@ -68,21 +91,26 @@ final class SetupModel: ObservableObject {
     func refresh() {
         let trusted = Permissions.isAccessibilityTrusted
         if trusted != axTrusted { axTrusted = trusted }
-        let status = WeTypeStatus.inspect()
-        if status != weType { weType = status }
+        let latest = IMEStatus.inspectAll()
+        if latest != statuses { statuses = latest }
+        syncEditingIME()
     }
 
     func isDone(_ step: SetupStep) -> Bool {
+        let usable = hotkeyIMEs.filter { status(of: $0).isUsable }
         switch step {
         case .permission: return axTrusted
-        case .weType: return weType.isInstalled && weType.isEnabled
-        case .hotkey:
-            let hotkey = resolution.hotkey
-            return weType.pushToTalkMatches(hotkey) == true
-                || diagnostics.candidates.contains { $0.hotkey == hotkey && $0.outcome?.isPushToTalk == true }
+        case .voiceIME: return !usable.isEmpty
+        case .hotkey: return !usable.isEmpty && usable.allSatisfy(hotkeyWorks)
         case .tryIt: return settings.hasCompletedOnboarding
         case .blocklist: return false
         }
+    }
+
+    private func hotkeyWorks(_ ime: VoiceIME) -> Bool {
+        let hotkey = resolution(for: ime).hotkey
+        return status(of: ime).pushToTalkMatches(hotkey) == true
+            || diagnostics.ime == ime && diagnostics.candidates.contains { $0.hotkey == hotkey && $0.outcome?.isPushToTalk == true }
     }
 
     func finish() {
@@ -114,8 +142,12 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
-    func show(step: SetupStep?, autoRunTest: Bool, startRecording: Bool = false) {
+    /// `ime` picks the input method the hotkey step shows, when it is one of the step's choices.
+    func show(step: SetupStep?, autoRunTest: Bool, startRecording: Bool = false, ime: VoiceIME? = nil) {
         model.refresh()
+        if let ime, model.hotkeyIMEs.contains(ime) {
+            model.editingIME = ime
+        }
         if let step {
             model.step = step
         } else if !model.axTrusted {
@@ -124,7 +156,10 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         model.startRefreshing()
         AppActivation.bringToFront(window)
         if autoRunTest {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in self?.model.diagnostics.run() }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                guard let self else { return }
+                self.model.diagnostics.run(for: self.model.editingIME)
+            }
         } else if startRecording {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in self?.model.recorder.start() }
         }
@@ -320,7 +355,7 @@ struct SetupView: View {
     private var content: some View {
         switch model.step {
         case .permission: PermissionStep(model: model)
-        case .weType: WeTypeStep(model: model)
+        case .voiceIME: VoiceIMEStep(model: model, settings: settings)
         case .hotkey: HotkeyStep(model: model, settings: settings, diagnostics: diagnostics)
         case .tryIt: TryItStep(model: model, settings: settings)
         case .blocklist: BlocklistPage(settings: settings)
@@ -417,51 +452,95 @@ private struct PermissionStep: View {
     }
 }
 
-private struct WeTypeStep: View {
+private struct VoiceIMEStep: View {
     @ObservedObject var model: SetupModel
-
-    private var status: WeTypeStatus { model.weType }
+    @ObservedObject var settings: AppSettings
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             StepHeader(
-                title: "检查微信输入法",
-                subtitle: "语音识别由微信输入法完成。快捷语音输入只负责在你长按鼠标时，替你按住它的语音快捷键。"
+                title: "选择语音输入法",
+                subtitle: "语音识别由输入法完成，目前支持\(VoiceIME.all.map(\.name).joined(separator: "和"))。快捷语音输入只负责在你长按鼠标时，替你按住它的语音快捷键。"
             )
-            StatusRow(ok: status.isInstalled, text: status.isInstalled ? "已安装微信输入法 \(status.version ?? "")" : "没有找到微信输入法")
-            if !status.isInstalled, let url = URL(string: "https://z.weixin.qq.com/") {
-                Link("前往微信输入法官网下载 Mac 版", destination: url)
-            }
-            if status.isInstalled {
-                StatusRow(ok: status.isEnabled, text: status.isEnabled ? "已添加到输入法列表" : "还没有添加到输入法列表")
-                if !status.isEnabled {
-                    Button("添加到输入法列表") {
-                        InputSource.enableWeType()
-                        model.refresh()
-                    }
-                }
-                StatusRow(ok: nil, text: "微信输入法当前的「按住说话」快捷键：\(status.pushToTalkDescription)")
-                if let note = versionNote {
-                    StatusRow(ok: false, text: note)
-                }
-                HStack {
-                    Button("打开微信输入法设置") { status.openSettingsApp() }
-                    Button("重新检测") { model.refresh() }
+            Picker("语音输入法", selection: $settings.voiceIME) {
+                ForEach(VoiceIMEChoice.all, id: \.self) { choice in
+                    Text(choice.title).tag(choice)
                 }
             }
+            .pickerStyle(.radioGroup)
+            .labelsHidden()
+            Text(choiceExplanation)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            ForEach(model.statuses) { status in
+                IMEStatusCard(model: model, status: status)
+            }
+            Button("重新检测") { model.refresh() }
         }
     }
 
-    private var versionNote: String? {
-        guard let version = status.version else { return nil }
-        let numbers = version.split(whereSeparator: { !$0.isNumber }).prefix(3).compactMap { Int($0) }
-        if numbers.lexicographicallyPrecedes([2, 2, 1]) {
-            return "当前版本还不支持自定义语音快捷键，请先升级到 2.2.1 或更新版本。"
+    private var choiceExplanation: String {
+        let names = VoiceIME.all.map(\.name).joined(separator: "或")
+        switch settings.voiceIME {
+        case .automatic:
+            let selection = VoiceTarget.select(settings: settings)
+            let switching = settings.autoSwitchInputSource ? "，开始前会自动切过去" : ""
+            return "当前输入法是\(names)时就用它；是其它输入法（比如 ABC）时，用最近用过的那个\(switching)。现在长按会用：\(selection.ime.name)（\(selection.explanation)）。"
+        case let .fixed(ime):
+            return settings.autoSwitchInputSource
+                ? "总是用\(ime.name)。当前是别的输入法时，开始前会自动切到\(ime.name)。"
+                : "总是用\(ime.name)。「触发前自动切换输入法」已关闭，需要先手动切到\(ime.name)。"
         }
-        if numbers == [2, 2, 3] {
-            return "有用户反馈 2.2.3 在终端里语音上屏异常；如果遇到，可以反馈给微信输入法或换用其它版本。"
+    }
+}
+
+private struct IMEStatusCard: View {
+    @ObservedObject var model: SetupModel
+    let status: IMEStatus
+
+    private var ime: VoiceIME { status.ime }
+
+    var body: some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 8) {
+                    Text(ime.name).font(.headline)
+                    if let version = status.version {
+                        Text(version).font(.callout).foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    if status.isCurrent {
+                        Text("当前输入法")
+                            .font(.caption)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Capsule().fill(Color.accentColor.opacity(0.15)))
+                    }
+                }
+                if status.isInstalled {
+                    StatusRow(ok: status.isEnabled, text: status.isEnabled ? "已安装，已添加到输入法列表" : "已安装，但还没有添加到输入法列表")
+                    if !status.isEnabled {
+                        Button("添加到输入法列表") {
+                            InputSource.enable(ime)
+                            model.refresh()
+                        }
+                    }
+                    StatusRow(ok: nil, text: "「\(ime.pushToTalkName)」快捷键：\(status.pushToTalkDescription)")
+                    if let advice = status.versionAdvice {
+                        StatusRow(ok: false, text: advice)
+                    }
+                    Button("打开\(ime.name)设置") { status.openSettingsApp() }
+                } else {
+                    StatusRow(ok: nil, text: "没有安装")
+                    if let url = URL(string: ime.downloadURL) {
+                        Link("前往\(ime.name)官网下载 Mac 版", destination: url)
+                    }
+                }
+            }
+            .padding(6)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        return nil
     }
 }
 
@@ -470,55 +549,81 @@ private struct HotkeyStep: View {
     @ObservedObject var settings: AppSettings
     @ObservedObject var diagnostics: HotkeyDiagnostics
 
+    private var ime: VoiceIME { model.editingIME }
+    private var status: IMEStatus { model.status(of: ime) }
+    private var setting: IMEHotkeySetting { settings.hotkeySetting(for: ime) }
+
+    private var sourceBinding: Binding<HotkeySource> {
+        Binding(
+            get: { settings.hotkeySetting(for: ime).source },
+            set: { settings.setHotkeySource($0, for: ime) }
+        )
+    }
+
     private var presetBinding: Binding<String> {
         Binding(
-            get: { HotkeyPreset.matching(settings.hotkey)?.id ?? "custom" },
+            get: { HotkeyPreset.matching(settings.hotkeySetting(for: ime).manual)?.id ?? "custom" },
             set: { id in
-                if let preset = HotkeyPreset.all.first(where: { $0.id == id }) { settings.useManualHotkey(preset.hotkey) }
+                if let preset = HotkeyPreset.all.first(where: { $0.id == id }) { settings.useManualHotkey(preset.hotkey, for: ime) }
             }
         )
     }
 
     var body: some View {
-        let resolution = model.weType.resolution(for: settings)
+        let resolution = model.resolution(for: ime)
         VStack(alignment: .leading, spacing: 16) {
             StepHeader(
                 title: "设置语音快捷键",
-                subtitle: "长按时，快捷语音输入会替你按住微信输入法「按住说话」的快捷键。默认直接跟随微信输入法里的设置，不需要额外改动。"
+                subtitle: "长按时，快捷语音输入会替你按住\(ime.name)「\(ime.pushToTalkName)」的快捷键。默认直接跟随\(ime.name)里的设置，不需要额外改动。"
             )
-            Picker("快捷键来源", selection: $settings.hotkeySource) {
-                Text("跟随微信输入法（推荐）").tag(HotkeySource.followWeType)
+            if model.hotkeyIMEs.count > 1 {
+                VStack(alignment: .leading, spacing: 6) {
+                    Picker("输入法", selection: $model.editingIME) {
+                        ForEach(model.hotkeyIMEs) { ime in
+                            Text(ime.name).tag(ime)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .frame(maxWidth: 300)
+                    Text("「语音输入法」选的是自动，每个输入法的快捷键分别设置、分别测试。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            Picker("快捷键来源", selection: sourceBinding) {
+                Text("跟随\(ime.name)（推荐）").tag(HotkeySource.followIME)
                 Text("手动指定").tag(HotkeySource.manual)
             }
             .pickerStyle(.segmented)
             .labelsHidden()
             .frame(maxWidth: 380)
 
-            if settings.hotkeySource == .followWeType {
+            if setting.source == .followIME {
                 followSection(resolution)
             } else {
                 manualSection
             }
-            HotkeyRiskNotes(hotkey: resolution.hotkey)
-            if let title = weTypeGuideTitle(resolution) {
-                weTypeGuide(title: title)
+            HotkeyRiskNotes(hotkey: resolution.hotkey, conflicts: model.statuses.conflicts(holding: resolution.hotkey, for: ime).map(\.message))
+            if let title = guideTitle(resolution) {
+                imeGuide(title: title)
             }
 
             Divider()
-            HotkeyTestSection(diagnostics: diagnostics, testField: model.testField)
+            HotkeyTestSection(diagnostics: diagnostics, testField: model.testField, ime: ime)
         }
     }
 
     @ViewBuilder
     private func followSection(_ resolution: HotkeyResolution) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            if resolution.followsWeType {
-                StatusRow(ok: true, text: "微信输入法的「按住说话」是「\(model.weType.pushToTalkDescription)」，长按时会按住同样的键。以后在微信输入法里改键，这里会自动跟着变。")
+            if resolution.followsIME {
+                StatusRow(ok: true, text: "\(ime.name)的「\(ime.pushToTalkName)」是「\(status.pushToTalkDescription)」，长按时会按住同样的键。以后在\(ime.name)里改键，下一次长按就会跟着变，不用重启。")
             } else {
-                StatusRow(ok: false, text: resolution.fallbackReason ?? "没能跟随微信输入法的设置。")
+                StatusRow(ok: false, text: resolution.fallbackReason ?? "没能跟随\(ime.name)的设置。")
             }
             HStack(spacing: 12) {
-                Button("重新读取微信输入法设置") { model.refresh() }
+                Button("重新读取\(ime.name)设置") { model.refresh() }
                 Text("想用别的组合？").font(.callout).foregroundStyle(.secondary)
                 HotkeyRecorderButton(model: model.recorder)
             }
@@ -529,18 +634,18 @@ private struct HotkeyStep: View {
         VStack(alignment: .leading, spacing: 10) {
             Picker("快捷语音输入替你按住：", selection: presetBinding) {
                 ForEach(HotkeyPreset.all) { preset in
-                    Text(preset.title).tag(preset.id)
+                    Text(preset.title(for: ime)).tag(preset.id)
                 }
-                if HotkeyPreset.matching(settings.hotkey) == nil {
-                    Text("自定义：\(settings.hotkey.displayName)").tag("custom")
+                if HotkeyPreset.matching(setting.manual) == nil {
+                    Text("自定义：\(setting.manual.displayName)").tag("custom")
                 }
             }
             .frame(maxWidth: 420)
-            if let preset = HotkeyPreset.matching(settings.hotkey) {
+            if let preset = HotkeyPreset.matching(setting.manual) {
                 Text(preset.note).font(.caption).foregroundStyle(.secondary)
             }
             HotkeyRecorderButton(model: model.recorder)
-            Text("录制时直接按下想用的组合，例如先按住左 Option 再按空格。如果按的正好是微信输入法当前的语音快捷键，它可能会被微信输入法拦截，这时直接选「跟随微信输入法」就行。")
+            Text("录制时直接按下想用的组合，例如先按住左 Option 再按空格。如果按的正好是\(ime.name)当前的语音快捷键，它可能会被\(ime.name)拦截，这时直接选「跟随\(ime.name)」就行。")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -550,42 +655,41 @@ private struct HotkeyStep: View {
 
     @ViewBuilder
     private var matchRow: some View {
-        let weType = model.weType
-        switch weType.pushToTalkMatches(settings.hotkey) {
+        switch status.pushToTalkMatches(setting.manual) {
         case .some(true):
-            StatusRow(ok: true, text: "与微信输入法的「按住说话」（\(weType.pushToTalkDescription)）一致")
+            StatusRow(ok: true, text: "与\(ime.name)的「\(ime.pushToTalkName)」（\(status.pushToTalkDescription)）一致")
         case .some(false):
             VStack(alignment: .leading, spacing: 6) {
-                StatusRow(ok: false, text: "微信输入法的「按住说话」目前是「\(weType.pushToTalkDescription)」，和这里选的不一致")
-                Button("改为跟随微信输入法") { settings.hotkeySource = .followWeType }
+                StatusRow(ok: false, text: "\(ime.name)的「\(ime.pushToTalkName)」目前是「\(status.pushToTalkDescription)」，和这里选的不一致")
+                Button("改为跟随\(ime.name)") { settings.setHotkeySource(.followIME, for: ime) }
                     .buttonStyle(.link)
                     .font(.callout)
             }
         case .none:
-            StatusRow(ok: nil, text: "没能读取微信输入法的快捷键设置，可以直接用下面的测试确认。")
+            StatusRow(ok: nil, text: "没能读取\(ime.name)的快捷键设置，可以直接用下面的测试确认。")
         }
     }
 
-    private func weTypeGuideTitle(_ resolution: HotkeyResolution) -> String? {
-        guard model.weType.isInstalled else { return nil }
-        if settings.hotkeySource == .followWeType, !resolution.followsWeType {
-            return "需要在微信输入法里换一个键"
+    private func guideTitle(_ resolution: HotkeyResolution) -> String? {
+        guard status.isInstalled else { return nil }
+        if setting.source == .followIME, !resolution.followsIME {
+            return "需要在\(ime.name)里换一个键"
         }
         if !resolution.hotkey.risks.isEmpty {
-            return "更稳妥的做法（可选）：把微信输入法的「按住说话」改成右 Option"
+            return "更稳妥的做法（可选）：把\(ime.name)的「\(ime.pushToTalkName)」改成\(ime.defaultHotkey.displayName)"
         }
         return nil
     }
 
-    private func weTypeGuide(title: String) -> some View {
+    private func imeGuide(title: String) -> some View {
         GroupBox {
             VStack(alignment: .leading, spacing: 8) {
                 Text(title).font(.headline)
-                Numbered(index: 1, text: "点「打开微信输入法设置」，进入「语音」相关设置。")
-                Numbered(index: 2, text: "找到「按住说话」，点它的快捷键框，然后按一下键盘右侧的 Option（⌥）键。")
-                Numbered(index: 3, text: "回到这里点「重新读取」。选的是「跟随微信输入法」的话，这里会自动跟着变。")
+                ForEach(Array(ime.setupSteps.enumerated()), id: \.offset) { index, text in
+                    Numbered(index: index + 1, text: text)
+                }
                 HStack {
-                    Button("打开微信输入法设置") { model.weType.openSettingsApp() }
+                    Button("打开\(ime.name)设置") { status.openSettingsApp() }
                     Button("重新读取") { model.refresh() }
                 }
                 .padding(.top, 4)
@@ -601,11 +705,15 @@ struct HotkeyTestSection: View {
 
     @ObservedObject var diagnostics: HotkeyDiagnostics
     let testField: TestFieldHandle
+    let ime: VoiceIME
+
+    /// Results belong to the input method they were measured with.
+    private var showsResults: Bool { diagnostics.ime == ime }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 10) {
-                Button(diagnostics.isRunning ? "正在测试…" : "开始测试语音快捷键") { diagnostics.run() }
+                Button(diagnostics.isRunning ? "正在测试…" : "开始测试\(ime.name)的语音快捷键") { diagnostics.run(for: ime) }
                     .buttonStyle(.borderedProminent)
                     .disabled(diagnostics.isRunning)
                 if diagnostics.isRunning {
@@ -613,7 +721,7 @@ struct HotkeyTestSection: View {
                     Button("停止") { diagnostics.cancel() }
                 }
             }
-            Text("测试会切到微信输入法，依次按住每个候选键约 2 秒，通过麦克风有没有开始工作来判断哪个键可用。全程约 20 秒，期间不用说话，也请不要操作键盘和鼠标。")
+            Text("测试会切到\(ime.name)，依次按住每个候选键约 2 秒，通过麦克风有没有开始工作来判断哪个键可用。全程约 20 秒，期间不用说话，也请不要操作键盘和鼠标。")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -621,36 +729,45 @@ struct HotkeyTestSection: View {
                 Text("测试输入框（测试时会自动聚焦）").font(.caption).foregroundStyle(.secondary)
                 TestTextView(handle: testField).frame(height: 44)
             }
-            if let progress = diagnostics.progress {
-                Text(progress).font(.callout)
-            }
-            ForEach(diagnostics.candidates) { candidate in
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    icon(for: candidate).frame(width: 16)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(candidate.title)
-                        if let outcome = candidate.outcome {
-                            Text(outcome.summary)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                    }
-                }
-            }
-            if let summary = diagnostics.summary {
-                Text(summary)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(12)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(RoundedRectangle(cornerRadius: 8).fill(Color.secondary.opacity(0.1)))
-            }
-            if let suggestion = diagnostics.suggestion {
-                Button("改用「\(suggestion.hotkey.displayName)」") { diagnostics.adoptSuggestion() }
-                    .buttonStyle(.borderedProminent)
+            if showsResults {
+                results
+            } else if let other = diagnostics.ime, diagnostics.isRunning {
+                Text("正在测试\(other.name)…").font(.callout)
             }
         }
         .id(Self.anchorID)
+    }
+
+    @ViewBuilder
+    private var results: some View {
+        if let progress = diagnostics.progress {
+            Text(progress).font(.callout)
+        }
+        ForEach(diagnostics.candidates) { candidate in
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                icon(for: candidate).frame(width: 16)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(candidate.title)
+                    if let outcome = candidate.outcome {
+                        Text(outcome.summary(for: ime))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+        }
+        if let summary = diagnostics.summary {
+            Text(summary)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(RoundedRectangle(cornerRadius: 8).fill(Color.secondary.opacity(0.1)))
+        }
+        if let suggestion = diagnostics.suggestion {
+            Button("改用「\(suggestion.hotkey.displayName)」") { diagnostics.adoptSuggestion() }
+                .buttonStyle(.borderedProminent)
+        }
     }
 
     @ViewBuilder

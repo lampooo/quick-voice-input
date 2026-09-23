@@ -24,7 +24,7 @@ public struct HotkeyRecorder: Sendable {
     public mutating func flagsChanged(keyCode: Int, flags: UInt64) -> Step {
         guard isActive else { return step }
         if keyCode == Int(KeyCode.function) {
-            step = .rejected("Fn 键无法被程序模拟，请换一个键（推荐右 Option）。")
+            step = .rejected("Fn 键无法被程序模拟，请换一个键，比如右 Option 或右 Command。")
             return step
         }
         if keyCode == Int(KeyCode.capsLock) {

@@ -75,7 +75,11 @@ final class HotkeyTests: XCTestCase {
     }
 
     func testPresetsAreValidAndUnique() {
-        XCTAssertEqual(HotkeyPreset.recommended.id, "rightOption")
+        XCTAssertEqual(HotkeyPreset.matching(VoiceIME.weType.defaultHotkey), .rightOption)
+        XCTAssertEqual(HotkeyPreset.matching(VoiceIME.doubao.defaultHotkey), .rightCommand)
+        XCTAssertEqual(HotkeyPreset.rightOption.title(for: .weType), "右 Option（推荐）")
+        XCTAssertEqual(HotkeyPreset.rightOption.title(for: .doubao), "右 Option")
+        XCTAssertEqual(HotkeyPreset.rightCommand.title(for: .doubao), "右 Command（推荐）")
         XCTAssertEqual(Set(HotkeyPreset.all.map(\.id)).count, HotkeyPreset.all.count)
         XCTAssertEqual(Set(HotkeyPreset.all.map(\.hotkey)).count, HotkeyPreset.all.count)
         for preset in HotkeyPreset.all {
@@ -99,6 +103,9 @@ final class HotkeyTests: XCTestCase {
         XCTAssertEqual(HotkeyTestOutcome.evaluate(micBusyBefore: false, startLatency: 0.3, stoppedAfterRelease: false), .toggle(latency: 0.3))
         XCTAssertTrue(HotkeyTestOutcome.pushToTalk(latency: 0.2).isPushToTalk)
         XCTAssertFalse(HotkeyTestOutcome.toggle(latency: 0.2).isPushToTalk)
+        XCTAssertEqual(HotkeyTestOutcome.noResponse.summary(for: .doubao), "没有反应：豆包输入法没有开始录音")
+        XCTAssertEqual(HotkeyTestOutcome.toggle(latency: 0.3).summary(for: .doubao),
+                       "会开始录音（0.3 秒），但松开后不停止：这是「按一次开始说话」快捷键，不是「按住说话」")
     }
 
     func testAppRules() {

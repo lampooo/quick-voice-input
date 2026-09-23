@@ -24,9 +24,13 @@ enum PreviewRenderer {
             save(hosting, to: outputDirectory.appendingPathComponent("setup-\(step.rawValue + 1).png"))
         }
         model.step = .hotkey
-        settings.hotkeySource = .manual
+        for ime in model.hotkeyIMEs {
+            model.editingIME = ime
+            save(hosting, to: outputDirectory.appendingPathComponent("setup-3-\(ime.id).png"))
+        }
+        settings.setHotkeySource(.manual, for: model.editingIME)
         save(hosting, to: outputDirectory.appendingPathComponent("setup-3-manual.png"))
-        settings.hotkeySource = .followWeType
+        settings.setHotkeySource(.followIME, for: model.editingIME)
 
         model.step = .blocklist
         for bundleID in ["com.tencent.xinWeChat", "com.apple.Terminal", "com.example.removed-app"] {
@@ -35,9 +39,9 @@ enum PreviewRenderer {
         save(hosting, to: outputDirectory.appendingPathComponent("setup-5-list.png"))
         settings.appRules = [:]
 
-        diagnostics.loadPreviewResults(weType: model.weType)
+        diagnostics.loadPreviewResults(status: model.status(of: model.editingIME))
         let results = NSHostingView(rootView:
-            HotkeyTestSection(diagnostics: diagnostics, testField: TestFieldHandle())
+            HotkeyTestSection(diagnostics: diagnostics, testField: TestFieldHandle(), ime: model.editingIME)
                 .padding(20)
                 .frame(width: 580, alignment: .topLeading)
         )

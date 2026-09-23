@@ -93,18 +93,31 @@ final class HotkeyRiskAndResolverTests: XCTestCase {
 
     func testManualIgnoresWeType() {
         let manual = Hotkey(modifiers: [.rightCommand])
-        let result = HotkeyResolver.resolve(source: .manual, manual: manual, weType: config(VoiceShortcut(keyCodes: [58, 49])))
-        XCTAssertEqual(result, HotkeyResolution(hotkey: manual, followsWeType: false))
+        let result = HotkeyResolver.resolve(IMEHotkeySetting(source: .manual, manual: manual), ime: .weType,
+                                            config: config(VoiceShortcut(keyCodes: [58, 49])))
+        XCTAssertEqual(result, HotkeyResolution(ime: .weType, hotkey: manual, followsIME: false))
+        XCTAssertEqual(result.origin, "手动设置")
     }
 
     func testFollowUsesWeTypeShortcut() {
-        let result = HotkeyResolver.resolve(source: .followWeType, manual: HotkeyPreset.rightOption.hotkey,
-                                            weType: config(VoiceShortcut(keyCodes: [58, 49], modifierFlags: 524_288, tapCount: 1, enabled: true)))
-        XCTAssertEqual(result, HotkeyResolution(hotkey: Hotkey(modifiers: [.leftOption], key: 49), followsWeType: true))
+        let result = HotkeyResolver.resolve(.standard(for: .weType), ime: .weType,
+                                            config: config(VoiceShortcut(keyCodes: [58, 49], modifierFlags: 524_288, tapCount: 1, enabled: true)))
+        XCTAssertEqual(result, HotkeyResolution(ime: .weType, hotkey: Hotkey(modifiers: [.leftOption], key: 49), followsIME: true))
+        XCTAssertEqual(result.origin, "跟随微信输入法")
+    }
+
+    /// The change the user made: WeType's 「按住说话」 moved from ⌥ + Space to right Option.
+    func testFollowPicksUpChangedWeTypeShortcut() {
+        let setting = IMEHotkeySetting.standard(for: .weType)
+        let before = HotkeyResolver.resolve(setting, ime: .weType, config: config(VoiceShortcut(keyCodes: [58, 49])))
+        let after = HotkeyResolver.resolve(setting, ime: .weType, config: config(VoiceShortcut(keyCodes: [61], modifierFlags: 524_288)))
+        XCTAssertEqual(before.hotkey, HotkeyPreset.optionSpace.hotkey)
+        XCTAssertEqual(after.hotkey, HotkeyPreset.rightOption.hotkey)
+        XCTAssertTrue(after.followsIME)
     }
 
     func testFollowFallsBackWhenWeTypeCannotBeSynthesized() {
-        let manual = HotkeyPreset.rightOption.hotkey
+        let setting = IMEHotkeySetting.standard(for: .weType)
         let cases: [IMEVoiceConfig?] = [
             nil,
             config(nil),
@@ -114,10 +127,10 @@ final class HotkeyRiskAndResolverTests: XCTestCase {
             config(VoiceShortcut(keyCodes: [61], enabled: false)),
         ]
         for weType in cases {
-            let result = HotkeyResolver.resolve(source: .followWeType, manual: manual, weType: weType)
-            XCTAssertEqual(result.hotkey, manual)
-            XCTAssertFalse(result.followsWeType)
-            XCTAssertNotNil(result.fallbackReason)
+            let result = HotkeyResolver.resolve(setting, ime: .weType, config: weType)
+            XCTAssertEqual(result.hotkey, VoiceIME.weType.defaultHotkey)
+            XCTAssertFalse(result.followsIME)
+            XCTAssertEqual(result.fallbackReason?.hasSuffix("暂时按住「右 Option」"), true, "\(String(describing: weType))")
         }
     }
 }

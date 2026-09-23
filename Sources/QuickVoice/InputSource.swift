@@ -1,41 +1,39 @@
 import Carbon
 import Foundation
+import QuickVoiceCore
 
-/// Text Input Source helpers for WeType. Call from the main thread.
+/// Text Input Source helpers. Call from the main thread.
 enum InputSource {
-    static let weTypeSourceID = "com.tencent.inputmethod.wetype.pinyin"
-    static let weTypeBundleID = "com.tencent.inputmethod.wetype"
-
     static func currentSourceID() -> String? {
         guard let source = TISCopyCurrentKeyboardInputSource()?.takeRetainedValue() else { return nil }
         return property(source, kTISPropertyInputSourceID)
     }
 
-    static var isWeTypeCurrent: Bool { currentSourceID() == weTypeSourceID }
-
-    static func weTypeSource(includeAllInstalled: Bool) -> TISInputSource? {
-        source(withID: weTypeSourceID, includeAllInstalled: includeAllInstalled)
+    static func isCurrent(_ ime: VoiceIME) -> Bool {
+        ime.owns(sourceID: currentSourceID())
     }
 
-    static var isWeTypeEnabled: Bool { weTypeSource(includeAllInstalled: false) != nil }
+    static func isEnabled(_ ime: VoiceIME) -> Bool {
+        enabledSource(of: ime) != nil
+    }
 
-    /// Selects WeType if it is not already the current input source. Returns false on failure.
+    /// Selects the input method's first enabled voice input source. Returns false on failure.
     @discardableResult
-    static func selectWeType() -> Bool {
-        if isWeTypeCurrent { return true }
-        guard let source = weTypeSource(includeAllInstalled: false) else {
-            Log.info("WeType input source is not enabled")
+    static func select(_ ime: VoiceIME) -> Bool {
+        if isCurrent(ime) { return true }
+        guard let source = enabledSource(of: ime) else {
+            Log.info("\(ime.id) input source is not enabled")
             return false
         }
         let status = TISSelectInputSource(source)
-        Log.info("TISSelectInputSource(WeType) -> \(status)")
+        Log.info("TISSelectInputSource(\(ime.id)) -> \(status)")
         return status == noErr
     }
 
-    /// Adds WeType to the enabled input sources (user-initiated from the setup guide).
+    /// Adds the input method to the enabled input sources (user-initiated from the setup guide).
     @discardableResult
-    static func enableWeType() -> Bool {
-        guard let source = weTypeSource(includeAllInstalled: true) else { return false }
+    static func enable(_ ime: VoiceIME) -> Bool {
+        guard let id = ime.inputSourceIDs.first, let source = source(withID: id, includeAllInstalled: true) else { return false }
         return TISEnableInputSource(source) == noErr
     }
 
@@ -43,6 +41,13 @@ enum InputSource {
     static func select(sourceID: String) -> Bool {
         guard let source = source(withID: sourceID, includeAllInstalled: false) else { return false }
         return TISSelectInputSource(source) == noErr
+    }
+
+    private static func enabledSource(of ime: VoiceIME) -> TISInputSource? {
+        for id in ime.inputSourceIDs {
+            if let source = source(withID: id, includeAllInstalled: false) { return source }
+        }
+        return nil
     }
 
     private static func source(withID id: String, includeAllInstalled: Bool) -> TISInputSource? {

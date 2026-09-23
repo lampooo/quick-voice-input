@@ -210,42 +210,46 @@ public struct Hotkey: Codable, Hashable, Sendable {
 public struct HotkeyPreset: Identifiable, Hashable, Sendable {
     public let id: String
     public let hotkey: Hotkey
-    public let title: String
+    public let name: String
     public let note: String
+
+    /// The preset's name, marked when it is the input method's recommended key.
+    public func title(for ime: VoiceIME) -> String {
+        hotkey == ime.defaultHotkey ? "\(name)（推荐）" : name
+    }
 
     public static let rightOption = HotkeyPreset(
         id: "rightOption",
         hotkey: Hotkey(modifiers: [.rightOption]),
-        title: "右 Option（推荐）",
+        name: "右 Option",
         note: "程序可以模拟；平时单独按它不会触发任何功能，Mac 自带键盘也有这个键。"
     )
     public static let rightCommand = HotkeyPreset(
         id: "rightCommand",
         hotkey: Hotkey(modifiers: [.rightCommand]),
-        title: "右 Command",
-        note: "程序可以模拟；如果开启了微信输入法「用左右 Command 选候选词」会冲突。"
+        name: "右 Command",
+        note: "程序可以模拟，Mac 自带键盘也有这个键；如果输入法开启了「用左右 Command 选候选词」，有候选词时会冲突。"
     )
     public static let rightControl = HotkeyPreset(
         id: "rightControl",
         hotkey: Hotkey(modifiers: [.rightControl]),
-        title: "右 Control",
-        note: "程序可以模拟；Mac 自带键盘没有这个键，需要外接键盘才能在微信输入法里录入。"
+        name: "右 Control",
+        note: "程序可以模拟；Mac 自带键盘没有这个键，需要外接键盘才能在输入法设置里录入。"
     )
     public static let rightShift = HotkeyPreset(
         id: "rightShift",
         hotkey: Hotkey(modifiers: [.rightShift]),
-        title: "右 Shift",
-        note: "程序可以模拟；微信输入法用 Shift 切换中英文，可能冲突。"
+        name: "右 Shift",
+        note: "程序可以模拟；输入法通常用 Shift 切换中英文，可能冲突。"
     )
     public static let optionSpace = HotkeyPreset(
         id: "optionSpace",
         hotkey: Hotkey(modifiers: [.leftOption], key: KeyCode.space),
-        title: "⌥ + 空格",
+        name: "⌥ + 空格",
         note: "程序可以模拟；一些启动器（如 Raycast、ChatGPT）也常用这个组合。"
     )
 
     public static let all: [HotkeyPreset] = [rightOption, rightCommand, rightControl, rightShift, optionSpace]
-    public static let recommended = rightOption
 
     public static func matching(_ hotkey: Hotkey) -> HotkeyPreset? {
         all.first { $0.hotkey == hotkey }

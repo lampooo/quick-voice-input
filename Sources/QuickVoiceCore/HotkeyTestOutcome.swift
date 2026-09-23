@@ -4,7 +4,7 @@ import Foundation
 public enum HotkeyTestOutcome: Equatable, Sendable {
     /// Recording started while the key was held and stopped after release.
     case pushToTalk(latency: TimeInterval)
-    /// Recording started but kept going after release: this is WeType's 「启动语音输入」 key.
+    /// Recording started but kept going after release: this is the press-once key, not hold-to-talk.
     case toggle(latency: TimeInterval)
     /// The microphone never started.
     case noResponse
@@ -17,14 +17,14 @@ public enum HotkeyTestOutcome: Equatable, Sendable {
         return false
     }
 
-    public var summary: String {
+    public func summary(for ime: VoiceIME) -> String {
         switch self {
         case let .pushToTalk(latency):
             return String(format: "可用：按住 %.1f 秒后开始录音，松开后结束", latency)
         case let .toggle(latency):
-            return String(format: "会开始录音（%.1f 秒），但松开后不停止：这是「启动语音输入」快捷键，不是「按住说话」", latency)
+            return String(format: "会开始录音（%.1f 秒）", latency) + "，但松开后不停止：这是「\(ime.toggleName)」快捷键，不是「\(ime.pushToTalkName)」"
         case .noResponse:
-            return "没有反应：微信输入法没有开始录音"
+            return "没有反应：\(ime.name)没有开始录音"
         case .micBusy:
             return "无法判断：测试前麦克风已被其它应用占用"
         case let .skipped(reason):

@@ -3,8 +3,8 @@ import CoreGraphics
 import Foundation
 import QuickVoiceCore
 
-/// Holds WeType's voice hotkey for the duration of a long press, on a serial queue so the
-/// event tap never waits. A watchdog releases the key if the real mouse-up was missed.
+/// Holds the voice input method's hotkey for the duration of a long press, on a serial queue so
+/// the event tap never waits. A watchdog releases the key if the real mouse-up was missed.
 final class VoiceController: EventTapDelegate {
     var onRecordingChanged: ((Bool) -> Void)?
     /// Called (on the voice queue) when the watchdog had to release the key by itself.
@@ -64,20 +64,22 @@ final class VoiceController: EventTapDelegate {
     private func begin(generation current: Int, at point: CGPoint) {
         let snapshot = settings.snapshot
         watchButtonState = ensureButtonStillDown(at: point, generation: current)
+        let selection = DispatchQueue.main.sync { VoiceTarget.select(settings: settings) }
+        let ime = selection.ime
         var settle: useconds_t = 60_000
         if snapshot.autoSwitchInputSource {
             let switched = DispatchQueue.main.sync { () -> Bool in
-                if InputSource.isWeTypeCurrent { return false }
-                return InputSource.selectWeType()
+                if InputSource.isCurrent(ime) { return false }
+                return InputSource.select(ime)
             }
             if switched {
-                waitUntilWeTypeIsCurrent(timeout: 0.5)
+                waitUntilCurrent(ime, timeout: 0.5)
                 settle = 150_000
             }
         }
         usleep(settle)
 
-        let resolution = settings.resolvedHotkey()
+        let resolution = settings.resolvedHotkey(for: ime)
         stateLock.lock()
         let abort = endRequested || current != generation
         if !abort { keySynth.press(resolution.hotkey) }
@@ -91,8 +93,8 @@ final class VoiceController: EventTapDelegate {
             NSHapticFeedbackManager.defaultPerformer.perform(.levelChange, performanceTime: .now)
         }
         holdStartedAt = ProcessInfo.processInfo.systemUptime
-        let origin = resolution.followsWeType ? "跟随微信输入法" : (resolution.fallbackReason ?? "手动设置")
-        Log.info("holding hotkey \(resolution.hotkey.displayName) (\(origin))")
+        let choice = selection.reason == .chosen ? "" : "，自动：\(selection.explanation)"
+        Log.info("holding hotkey \(resolution.hotkey.displayName) for \(ime.name) (\(resolution.origin)\(choice))")
         startWatchdog()
         recordingNotified = true
         notify(true)
@@ -130,13 +132,13 @@ final class VoiceController: EventTapDelegate {
         notify(false)
     }
 
-    private func waitUntilWeTypeIsCurrent(timeout: TimeInterval) {
+    private func waitUntilCurrent(_ ime: VoiceIME, timeout: TimeInterval) {
         let deadline = ProcessInfo.processInfo.systemUptime + timeout
         while ProcessInfo.processInfo.systemUptime < deadline {
-            if DispatchQueue.main.sync(execute: { InputSource.isWeTypeCurrent }) { return }
+            if DispatchQueue.main.sync(execute: { InputSource.isCurrent(ime) }) { return }
             usleep(20_000)
         }
-        Log.info("WeType did not become current within \(timeout)s")
+        Log.info("\(ime.id) did not become current within \(timeout)s")
     }
 
     private func startWatchdog() {

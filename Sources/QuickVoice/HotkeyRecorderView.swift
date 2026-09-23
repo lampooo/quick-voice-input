@@ -81,15 +81,19 @@ struct HotkeyRecorderButton: View {
     }
 }
 
-/// Warnings for a hotkey that could type characters or trigger other shortcuts.
+/// Warnings for a hotkey that could type characters, trigger other shortcuts, or clash with the
+/// input methods' own settings.
 struct HotkeyRiskNotes: View {
     let hotkey: Hotkey
+    var conflicts: [String] = []
+
+    private var messages: [String] { hotkey.risks.map(\.message) + conflicts }
 
     var body: some View {
-        if !hotkey.risks.isEmpty {
+        if !messages.isEmpty {
             VStack(alignment: .leading, spacing: 4) {
-                ForEach(hotkey.risks, id: \.message) { risk in
-                    Label(risk.message, systemImage: "exclamationmark.triangle.fill")
+                ForEach(messages, id: \.self) { message in
+                    Label(message, systemImage: "exclamationmark.triangle.fill")
                         .font(.callout)
                         .foregroundStyle(Color.orange)
                         .fixedSize(horizontal: false, vertical: true)

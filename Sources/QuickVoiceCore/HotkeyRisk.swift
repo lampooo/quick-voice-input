@@ -14,9 +14,9 @@ public enum HotkeyRisk: Equatable, Sendable {
         case let .systemShortcut(name):
             return "这个组合也是 macOS 的「\(name)」快捷键，按住时可能先触发系统功能。"
         case let .mayType(key):
-            return "这个组合包含普通键「\(key)」。如果微信输入法没有拦截它，可能会在输入框里打出字符（例如 ⌥ + 空格 会打出一个不换行空格）。建议只用单个修饰键，比如右 Option。"
+            return "这个组合包含普通键「\(key)」。如果输入法没有拦截它，可能会在输入框里打出字符（例如 ⌥ + 空格 会打出一个不换行空格）。建议只用单个修饰键，比如右 Option 或右 Command。"
         case let .mayTriggerShortcut(key):
-            return "这个组合包含普通键「\(key)」。如果微信输入法没有拦截它，可能会触发当前应用的快捷键。建议只用单个修饰键，比如右 Option。"
+            return "这个组合包含普通键「\(key)」。如果输入法没有拦截它，可能会触发当前应用的快捷键。建议只用单个修饰键，比如右 Option 或右 Command。"
         }
     }
 }

@@ -35,12 +35,12 @@ public enum AppRules {
     ]
 
     /// Bundles where a long press must never start voice input; the user cannot change these.
-    public static let alwaysExcluded: Set<String> = [
+    /// Includes every supported input method and its settings app.
+    public static let alwaysExcluded: Set<String> = Set([
         "com.apple.loginwindow",
         "com.apple.ScreenSaver.Engine",
         "com.apple.SecurityAgent",
-        "com.tencent.inputmethod.wetype",
-    ]
+    ] + VoiceIME.all.flatMap(\.bundleIDs))
 
     /// `overrides` holds only what the user changed, keyed by bundle ID.
     public static func rule(for bundleID: String?, overrides: [String: AppRule]) -> AppRule {

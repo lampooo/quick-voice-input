@@ -1,56 +1,88 @@
 import Foundation
 
-/// Where the voice hotkey comes from.
+/// Where an input method's voice hotkey comes from.
 public enum HotkeySource: String, Codable, CaseIterable, Sendable {
-    /// Read WeType's 「按住说话」 shortcut and hold exactly that.
-    case followWeType
+    /// Read the input method's own 「按住说话」 shortcut and hold exactly that.
+    case followIME
     /// Use the hotkey chosen or recorded in this app.
     case manual
 }
 
+/// The user's hotkey settings for one input method.
+public struct IMEHotkeySetting: Codable, Hashable, Sendable {
+    public var source: HotkeySource
+    /// The chosen or recorded hotkey; also held when following the input method is not possible.
+    public var manual: Hotkey
+
+    public init(source: HotkeySource, manual: Hotkey) {
+        self.source = source
+        self.manual = manual
+    }
+
+    public static func standard(for ime: VoiceIME) -> IMEHotkeySetting {
+        IMEHotkeySetting(source: .followIME, manual: ime.defaultHotkey)
+    }
+
+    /// Settings saved before the input method could be chosen (`hotkeySource`, `hotkey`) were
+    /// WeType's; nil when there are none.
+    public static func migrated(legacySource: String?, legacyHotkey: Hotkey?) -> IMEHotkeySetting? {
+        guard legacySource != nil || legacyHotkey != nil else { return nil }
+        return IMEHotkeySetting(
+            source: legacySource == HotkeySource.manual.rawValue ? .manual : .followIME,
+            manual: legacyHotkey.flatMap { $0.isValid ? $0 : nil } ?? VoiceIME.weType.defaultHotkey
+        )
+    }
+}
+
 public struct HotkeyResolution: Equatable, Sendable {
+    public var ime: VoiceIME
     public var hotkey: Hotkey
-    /// True when `hotkey` is WeType's own 「按住说话」 shortcut.
-    public var followsWeType: Bool
-    /// Why following WeType was not possible, shown to the user.
+    /// True when `hotkey` is the input method's own 「按住说话」 shortcut.
+    public var followsIME: Bool
+    /// Why following the input method was not possible, shown to the user.
     public var fallbackReason: String?
 
-    public init(hotkey: Hotkey, followsWeType: Bool, fallbackReason: String? = nil) {
+    public init(ime: VoiceIME, hotkey: Hotkey, followsIME: Bool, fallbackReason: String? = nil) {
+        self.ime = ime
         self.hotkey = hotkey
-        self.followsWeType = followsWeType
+        self.followsIME = followsIME
         self.fallbackReason = fallbackReason
+    }
+
+    /// Where the hotkey came from, for the log and menus.
+    public var origin: String {
+        followsIME ? "跟随\(ime.name)" : (fallbackReason ?? "手动设置")
     }
 }
 
 public enum HotkeyResolver {
-    public static func resolve(source: HotkeySource, manual: Hotkey, weType: IMEVoiceConfig?) -> HotkeyResolution {
-        guard source == .followWeType else {
-            return HotkeyResolution(hotkey: manual, followsWeType: false)
+    public static func resolve(_ setting: IMEHotkeySetting, ime: VoiceIME, config: IMEVoiceConfig?) -> HotkeyResolution {
+        let manual = setting.manual
+        guard setting.source == .followIME else {
+            return HotkeyResolution(ime: ime, hotkey: manual, followsIME: false)
         }
-        let fallback = "，暂时按住「\(manual.displayName)」"
-        guard let weType else {
-            return HotkeyResolution(hotkey: manual, followsWeType: false, fallbackReason: "没能读取微信输入法的设置" + fallback)
+        func fallback(_ reason: String) -> HotkeyResolution {
+            HotkeyResolution(ime: ime, hotkey: manual, followsIME: false, fallbackReason: reason + "，暂时按住「\(manual.displayName)」")
         }
-        guard let shortcut = weType.pushToTalk else {
-            return HotkeyResolution(hotkey: manual, followsWeType: false,
-                                    fallbackReason: "微信输入法没有记录「按住说话」快捷键（默认是 Fn，程序无法模拟）" + fallback)
+        let shortcutName = "\(ime.name)的「\(ime.pushToTalkName)」"
+        guard let config else {
+            return fallback("没能读取\(ime.name)的设置")
+        }
+        guard let shortcut = config.pushToTalk else {
+            return fallback("\(ime.name)没有记录「\(ime.pushToTalkName)」快捷键（默认是 Fn，程序无法模拟）")
         }
         if shortcut.isCleared {
-            return HotkeyResolution(hotkey: manual, followsWeType: false,
-                                    fallbackReason: "微信输入法的「按住说话」快捷键是空的，请先在微信输入法里设置它" + fallback)
+            return fallback("\(shortcutName)快捷键是空的，请先在\(ime.name)里设置它")
         }
         if shortcut.enabled == false {
-            return HotkeyResolution(hotkey: manual, followsWeType: false,
-                                    fallbackReason: "微信输入法的「按住说话」已关闭，请先在微信输入法里打开它" + fallback)
+            return fallback("\(shortcutName)已关闭，请先在\(ime.name)里打开它")
         }
         if shortcut.usesFn {
-            return HotkeyResolution(hotkey: manual, followsWeType: false,
-                                    fallbackReason: "微信输入法的「按住说话」是「\(shortcut.displayName)」，Fn 无法被程序模拟" + fallback)
+            return fallback("\(shortcutName)是「\(shortcut.displayName)」，Fn 无法被程序模拟")
         }
         guard let hotkey = shortcut.hotkey else {
-            return HotkeyResolution(hotkey: manual, followsWeType: false,
-                                    fallbackReason: "微信输入法的「按住说话」是「\(shortcut.displayName)」，程序无法模拟" + fallback)
+            return fallback("\(shortcutName)是「\(shortcut.displayName)」，程序无法模拟")
         }
-        return HotkeyResolution(hotkey: hotkey, followsWeType: true)
+        return HotkeyResolution(ime: ime, hotkey: hotkey, followsIME: true)
     }
 }

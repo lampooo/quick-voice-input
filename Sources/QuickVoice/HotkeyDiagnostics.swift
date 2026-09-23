@@ -3,7 +3,7 @@ import CoreAudio
 import QuickVoiceCore
 
 /// 「测试语音快捷键」: holds each candidate key in turn while our own test field is focused and
-/// watches the microphone to see which one makes WeType start (and stop) recording.
+/// watches the microphone to see which one makes the input method start (and stop) recording.
 final class HotkeyDiagnostics: ObservableObject {
     struct Candidate: Identifiable, Equatable {
         var id: String { hotkey.displayName }
@@ -13,13 +13,15 @@ final class HotkeyDiagnostics: ObservableObject {
         var isTesting = false
     }
 
+    /// The input method the candidates were tested with.
+    @Published private(set) var ime: VoiceIME?
     @Published private(set) var candidates: [Candidate] = []
     @Published private(set) var isRunning = false
     @Published private(set) var progress: String?
     @Published private(set) var summary: String?
     @Published private(set) var suggestion: Candidate?
 
-    /// Focuses / clears the test field that WeType types into during the test.
+    /// Focuses / clears the test field that the input method types into during the test.
     var focusTestField: (() -> Void)?
     var clearTestField: (() -> Void)?
 
@@ -36,21 +38,28 @@ final class HotkeyDiagnostics: ObservableObject {
         self.settings = settings
     }
 
-    static func buildCandidates(current resolution: HotkeyResolution, weType: WeTypeStatus) -> [Candidate] {
+    /// The input method's press-once key is not tested: it would start a recording that only ends
+    /// with another press, and the settings already say what it does.
+    static func buildCandidates(current resolution: HotkeyResolution, status: IMEStatus) -> [Candidate] {
+        let ime = status.ime
         var list: [Candidate] = []
         func add(_ hotkey: Hotkey, _ title: String) {
             guard hotkey.isValid, !list.contains(where: { $0.hotkey == hotkey }) else { return }
-            list.append(Candidate(title: title, hotkey: hotkey))
+            var candidate = Candidate(title: title, hotkey: hotkey)
+            if let toggle = status.voice?.toggle, toggle.enabled != false, toggle.hotkey == hotkey {
+                candidate.outcome = .skipped("这是\(ime.name)「\(ime.toggleName)」的快捷键")
+            }
+            list.append(candidate)
         }
         let current = resolution.hotkey
-        let origin = resolution.followsWeType ? "（跟随微信输入法）" : ""
-        add(current, "当前生效：" + (HotkeyPreset.matching(current)?.title ?? current.displayName) + origin)
-        if let weTypeHotkey = weType.voice?.pushToTalk?.hotkey {
-            add(weTypeHotkey, "微信输入法当前的「按住说话」：\(weTypeHotkey.displayName)")
+        let origin = resolution.followsIME ? "（跟随\(ime.name)）" : ""
+        add(current, "当前生效：" + (HotkeyPreset.matching(current)?.title(for: ime) ?? current.displayName) + origin)
+        if let own = status.voice?.pushToTalk?.hotkey {
+            add(own, "\(ime.name)当前的「\(ime.pushToTalkName)」：\(own.displayName)")
         }
-        // Right Shift toggles WeType between Chinese and English, so it is only tested when chosen.
+        // Right Shift switches input methods between Chinese and English, so it is only tested when chosen.
         for preset in HotkeyPreset.all where preset.id != HotkeyPreset.rightShift.id {
-            add(preset.hotkey, preset.title)
+            add(preset.hotkey, preset.title(for: ime))
         }
         return list
     }
@@ -68,24 +77,25 @@ final class HotkeyDiagnostics: ObservableObject {
         return cancelled
     }
 
-    /// Main thread. Runs the whole test; results are published as they come in.
-    func run() {
+    /// Main thread. Runs the whole test for `ime`; results are published as they come in.
+    func run(for ime: VoiceIME) {
         guard !isRunning else { return }
         summary = nil
         suggestion = nil
-        let weType = WeTypeStatus.inspect()
-        candidates = Self.buildCandidates(current: weType.resolution(for: settings), weType: weType)
+        self.ime = ime
+        let status = IMEStatus.inspect(ime)
+        candidates = Self.buildCandidates(current: status.resolution(for: settings), status: status)
 
         guard Permissions.isAccessibilityTrusted else {
             summary = "需要先授予「辅助功能」权限，快捷语音输入才能替你按键。"
             return
         }
-        guard weType.isInstalled else {
-            summary = "没有找到微信输入法。请先安装微信输入法 Mac 版。"
+        guard status.isInstalled else {
+            summary = "没有找到\(ime.name)。请先安装\(ime.name) Mac 版。"
             return
         }
-        guard weType.isEnabled else {
-            summary = "微信输入法还没有添加到输入法列表。请先在「系统设置 → 键盘 → 输入法」里添加它。"
+        guard status.isEnabled else {
+            summary = "\(ime.name)还没有添加到输入法列表。请先在「系统设置 → 键盘 → 输入法」里添加它。"
             return
         }
         guard let device = MicMonitor.defaultInputDevice() else {
@@ -101,28 +111,28 @@ final class HotkeyDiagnostics: ObservableObject {
         let secureInput = Permissions.isSecureInputActive
         let previousSource = InputSource.currentSourceID()
         focusTestField?()
-        InputSource.selectWeType()
-        Log.info("hotkey test started, mic=\(MicMonitor.name(of: device)), secureInput=\(secureInput)")
+        InputSource.select(ime)
+        Log.info("hotkey test started for \(ime.id), mic=\(MicMonitor.name(of: device)), secureInput=\(secureInput)")
 
         let list = candidates
         queue.async { [weak self] in
-            self?.runTests(list, previousSource: previousSource, secureInput: secureInput)
+            self?.runTests(list, ime: ime, previousSource: previousSource, secureInput: secureInput)
         }
     }
 
-    private func runTests(_ list: [Candidate], previousSource: String?, secureInput: Bool) {
+    private func runTests(_ list: [Candidate], ime: VoiceIME, previousSource: String?, secureInput: Bool) {
         usleep(500_000)
-        for (index, candidate) in list.enumerated() {
+        for (index, candidate) in list.enumerated() where candidate.outcome == nil {
             if isCancelled { break }
             onMain {
                 self.candidates[index].isTesting = true
                 self.progress = "正在测试「\(candidate.hotkey.displayName)」（\(index + 1)/\(list.count)），请不要操作键盘和鼠标…"
                 self.focusTestField?()
-                InputSource.selectWeType()
+                InputSource.select(ime)
             }
             usleep(300_000)
             let outcome = test(candidate.hotkey)
-            Log.info("hotkey test \(candidate.hotkey.displayName): \(outcome)")
+            Log.info("hotkey test \(ime.id) \(candidate.hotkey.displayName): \(outcome)")
             onMain {
                 self.candidates[index].outcome = outcome
                 self.candidates[index].isTesting = false
@@ -132,10 +142,10 @@ final class HotkeyDiagnostics: ObservableObject {
         }
         keySynth.release()
         onMain {
-            if let previousSource, previousSource != InputSource.weTypeSourceID {
+            if let previousSource, !ime.owns(sourceID: previousSource) {
                 InputSource.select(sourceID: previousSource)
             }
-            self.finish(secureInput: secureInput)
+            self.finish(ime: ime, secureInput: secureInput)
         }
     }
 
@@ -162,7 +172,7 @@ final class HotkeyDiagnostics: ObservableObject {
         keySynth.release()
         let stopped = waitForStop(since: baseline)
         if !stopped {
-            // A 「启动语音输入」 key keeps recording; press it again (then Esc) to end the session.
+            // A press-once key keeps recording; press it again (then Esc) to end the session.
             keySynth.tap(hotkey)
             if !waitForStop(since: baseline) {
                 keySynth.tap(Hotkey(modifiers: [], key: 53))
@@ -187,36 +197,37 @@ final class HotkeyDiagnostics: ObservableObject {
         return false
     }
 
-    private func finish(secureInput: Bool) {
+    private func finish(ime: VoiceIME, secureInput: Bool) {
         isRunning = false
         progress = nil
-        let current = settings.resolvedHotkey().hotkey
+        let current = settings.resolvedHotkey(for: ime).hotkey
         let working = candidates.filter { $0.outcome?.isPushToTalk == true }
+        let recommended = ime.defaultHotkey.displayName
         var lines: [String] = []
         if working.contains(where: { $0.hotkey == current }) {
-            lines.append("✅ 当前快捷键「\(current.displayName)」可以正常触发微信输入法的「按住说话」，可以开始使用了。")
+            lines.append("✅ 当前快捷键「\(current.displayName)」可以正常触发\(ime.name)的「\(ime.pushToTalkName)」，可以开始使用了。")
         } else if let first = working.first {
             suggestion = first
-            lines.append("「\(first.hotkey.displayName)」可以触发「按住说话」，但和当前设置「\(current.displayName)」不一样。点下面的按钮改用它。")
+            lines.append("「\(first.hotkey.displayName)」可以触发「\(ime.pushToTalkName)」，但和当前设置「\(current.displayName)」不一样。点下面的按钮改用它。")
         } else if let toggle = candidates.first(where: { if case .toggle = $0.outcome { return true } else { return false } }) {
-            lines.append("「\(toggle.hotkey.displayName)」是微信输入法的「启动语音输入」快捷键（按一下开始、再按结束），不适合长按。请在微信输入法设置里把「按住说话」改成「右 Option」后重新测试。")
+            lines.append("「\(toggle.hotkey.displayName)」是\(ime.name)的「\(ime.toggleName)」快捷键（按一下开始、再按结束），不适合长按。请在\(ime.name)设置里把「\(ime.pushToTalkName)」改成「\(recommended)」后重新测试。")
         } else if candidates.contains(where: { $0.outcome == .micBusy }) {
             lines.append("测试时麦克风被其它应用占用，结果不可靠。请关闭正在使用麦克风的应用（会议、录音软件等）后重新测试。")
         } else {
-            lines.append("没有候选键能触发微信输入法录音。请打开微信输入法设置 → 语音 → 「按住说话」，把快捷键改成「右 Option」，再重新测试。")
+            lines.append("没有候选键能触发\(ime.name)录音。请打开\(ime.name)设置，把「\(ime.pushToTalkName)」的快捷键改成「\(recommended)」，再重新测试。")
         }
         if secureInput {
-            lines.append("⚠️ 检测到有应用开启了「安全输入」（例如密码框，或终端的「安全键盘输入」），这会让微信输入法收不到快捷键。")
+            lines.append("⚠️ 检测到有应用开启了「安全输入」（例如密码框，或终端的「安全键盘输入」），这会让输入法收不到快捷键。")
         }
         summary = lines.joined(separator: "\n")
     }
 
     func adoptSuggestion() {
-        guard let suggestion else { return }
-        if WeTypeConfigCache.shared.current()?.pushToTalk?.hotkey == suggestion.hotkey {
-            settings.hotkeySource = .followWeType
+        guard let suggestion, let ime else { return }
+        if IMEConfigCache.shared.config(for: ime)?.pushToTalk?.hotkey == suggestion.hotkey {
+            settings.setHotkeySource(.followIME, for: ime)
         } else {
-            settings.useManualHotkey(suggestion.hotkey)
+            settings.useManualHotkey(suggestion.hotkey, for: ime)
         }
         summary = "已改用「\(suggestion.hotkey.displayName)」。"
         self.suggestion = nil
@@ -228,13 +239,14 @@ final class HotkeyDiagnostics: ObservableObject {
 
     #if DEBUG
     /// Fills in sample results so layout can be checked without running the test.
-    func loadPreviewResults(weType: WeTypeStatus) {
-        candidates = Self.buildCandidates(current: weType.resolution(for: settings), weType: weType)
+    func loadPreviewResults(status: IMEStatus) {
+        ime = status.ime
+        candidates = Self.buildCandidates(current: status.resolution(for: settings), status: status)
         let outcomes: [HotkeyTestOutcome] = [.noResponse, .pushToTalk(latency: 0.42), .noResponse, .toggle(latency: 0.3), .micBusy]
-        for index in candidates.indices {
+        for index in candidates.indices where candidates[index].outcome == nil {
             candidates[index].outcome = outcomes[index % outcomes.count]
         }
-        finish(secureInput: true)
+        finish(ime: status.ime, secureInput: true)
     }
     #endif
 }

@@ -1,4 +1,5 @@
 import AppKit
+import Carbon
 import Combine
 import QuickVoiceCore
 
@@ -27,13 +28,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         voice.onRecordingChanged = { [weak self] recording in self?.menuBar?.setRecording(recording) }
         voice.onWatchdogRelease = { [weak self] in self?.tap.resetPress() }
 
-        settings.$hotkey.dropFirst().sink { [weak self] _ in
+        settings.$imeHotkeys.dropFirst().removeDuplicates().sink { [weak self] hotkeys in
             self?.voice.releaseNow(reason: "hotkey changed")
+            Log.info("hotkeys: " + hotkeys.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value.source.rawValue)/\($0.value.manual.displayName)" }.joined(separator: ", "))
         }.store(in: &cancellables)
-        settings.$hotkeySource.dropFirst().sink { [weak self] source in
-            self?.voice.releaseNow(reason: "hotkey source changed")
-            Log.info("hotkey source: \(source.rawValue)")
+        settings.$voiceIME.dropFirst().removeDuplicates().sink { [weak self] choice in
+            self?.voice.releaseNow(reason: "voice input method changed")
+            Log.info("voice input method: \(choice.storedValue)")
         }.store(in: &cancellables)
+        settings.noteSelectedInputSource(InputSource.currentSourceID())
+        DistributedNotificationCenter.default().addObserver(
+            self,
+            selector: #selector(selectedInputSourceChanged),
+            name: NSNotification.Name(kTISNotifySelectedKeyboardInputSourceChanged as String),
+            object: nil,
+            suspensionBehavior: .deliverImmediately
+        )
 
         installSignalHandlers()
         lastTrusted = Permissions.isAccessibilityTrusted
@@ -58,11 +68,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         shutdown(reason: "quit")
     }
 
-    func showSetup(step: SetupStep?, autoRunTest: Bool = false, startRecording: Bool = false) {
+    func showSetup(step: SetupStep?, autoRunTest: Bool = false, startRecording: Bool = false, ime: VoiceIME? = nil) {
         if setupWindow == nil {
             setupWindow = SetupWindowController(model: SetupModel(settings: settings, diagnostics: diagnostics))
         }
-        setupWindow?.show(step: step, autoRunTest: autoRunTest, startRecording: startRecording)
+        setupWindow?.show(step: step, autoRunTest: autoRunTest, startRecording: startRecording, ime: ime)
+    }
+
+    /// Remembers the supported input method the user types with, for 「自动」. Our own switching
+    /// also lands here, which is what 「最近用过」 should mean.
+    @objc private func selectedInputSourceChanged() {
+        settings.noteSelectedInputSource(InputSource.currentSourceID())
     }
 
     func enabledDidChange() {
