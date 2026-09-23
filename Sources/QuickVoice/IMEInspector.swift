@@ -39,15 +39,6 @@ final class IMEConfigCache {
         entries[ime.id] = Entry(data: data, result: result)
         return result
     }
-
-    /// Every supported input method's settings that could be read.
-    func allConfigs() -> [VoiceIME: IMEVoiceConfig] {
-        var result: [VoiceIME: IMEVoiceConfig] = [:]
-        for ime in VoiceIME.all {
-            result[ime] = config(for: ime)
-        }
-        return result
-    }
 }
 
 /// Read-only view of one input method's installation and voice shortcut settings.
