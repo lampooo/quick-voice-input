@@ -25,6 +25,13 @@ final class OwnTestFields {
         return DispatchQueue.main.sync { visibleRects().contains { $0.contains(point) } }
     }
 
+    /// Character count of the focused test field, or nil when the focus is elsewhere. Main thread.
+    func focusedTextLength() -> Int? {
+        guard let textView = NSApp.keyWindow?.firstResponder as? NSTextView,
+              views.allObjects.contains(where: { textView.isDescendant(of: $0) }) else { return nil }
+        return textView.string.utf16.count
+    }
+
     private func visibleRects() -> [CGRect] {
         views.allObjects.compactMap { view in
             guard let window = view.window, window.isVisible, !view.isHiddenOrHasHiddenAncestor else { return nil }

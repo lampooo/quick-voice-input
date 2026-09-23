@@ -6,8 +6,9 @@ import QuickVoiceCore
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let settings = AppSettings.shared
     private let keySynth = KeySynth()
+    private let commitChecker = CommitChecker()
     private lazy var probe = TextFieldProbe(settings: settings)
-    private lazy var voice = VoiceController(settings: settings, keySynth: keySynth)
+    private lazy var voice = VoiceController(settings: settings, keySynth: keySynth, commitChecker: commitChecker)
     private lazy var tap = EventTap(settings: settings, probe: probe, keySynth: keySynth)
     private lazy var diagnostics = HotkeyDiagnostics(settings: settings)
     private var menuBar: MenuBarController?
@@ -27,6 +28,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         tap.onTapInvalidated = { [weak self] in self?.restartTap() }
         voice.onRecordingChanged = { [weak self] recording in self?.menuBar?.setRecording(recording) }
         voice.onWatchdogRelease = { [weak self] in self?.tap.resetPress() }
+        commitChecker.onReport = { [weak self] report in
+            self?.menuBar?.lastCommit = report
+            self?.setupWindow?.model.lastCommit = report
+        }
 
         settings.$imeHotkeys.dropFirst().removeDuplicates().sink { [weak self] hotkeys in
             self?.voice.releaseNow(reason: "hotkey changed")

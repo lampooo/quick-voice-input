@@ -2,9 +2,15 @@ import AppKit
 import CoreGraphics
 import QuickVoiceCore
 
+/// The app a recording types into, as the probe found it.
+struct RecordingTarget {
+    let pid: pid_t
+    let bundleID: String?
+}
+
 protocol EventTapDelegate: AnyObject {
     /// Called on the tap thread right after the synthetic mouse-up has been posted at `point`.
-    func eventTapDidBeginRecording(at point: CGPoint)
+    func eventTapDidBeginRecording(at point: CGPoint, target: RecordingTarget?)
     /// Called on the tap thread when the real mouse-up arrived (or the press was abandoned).
     func eventTapDidEndRecording()
 }
@@ -246,7 +252,7 @@ final class EventTap {
             case let .beginRecording(point):
                 cancelCheck()
                 keySynth.postMouseUp(at: point)
-                delegate?.eventTapDidBeginRecording(at: point)
+                delegate?.eventTapDidBeginRecording(at: point, target: recordingTarget(for: machine.pressID))
             case .endRecording:
                 delegate?.eventTapDidEndRecording()
             }
@@ -277,6 +283,13 @@ final class EventTap {
             Log.info("long press in \(describeResult(for: id)) -> skip")
         }
         apply(output.effects)
+    }
+
+    private func recordingTarget(for id: Int) -> RecordingTarget? {
+        verdictLock.lock()
+        defer { verdictLock.unlock() }
+        guard let result = results[id], let pid = result.pid else { return nil }
+        return RecordingTarget(pid: pid, bundleID: result.bundleID)
     }
 
     private func describeResult(for id: Int) -> String {

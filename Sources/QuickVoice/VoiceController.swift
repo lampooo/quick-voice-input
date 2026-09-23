@@ -12,6 +12,7 @@ final class VoiceController: EventTapDelegate {
 
     private let settings: AppSettings
     private let keySynth: KeySynth
+    private let commitChecker: CommitChecker
     private let queue = DispatchQueue(label: "quickvoice.voice", qos: .userInteractive)
 
     /// Guards `generation`/`endRequested` and makes "check, then press" atomic with `releaseNow`.
@@ -27,20 +28,21 @@ final class VoiceController: EventTapDelegate {
     private var watchButtonState = true
     private let maxHoldDuration: TimeInterval = 10 * 60
 
-    init(settings: AppSettings, keySynth: KeySynth) {
+    init(settings: AppSettings, keySynth: KeySynth, commitChecker: CommitChecker) {
         self.settings = settings
         self.keySynth = keySynth
+        self.commitChecker = commitChecker
     }
 
     // MARK: EventTapDelegate
 
-    func eventTapDidBeginRecording(at point: CGPoint) {
+    func eventTapDidBeginRecording(at point: CGPoint, target: RecordingTarget?) {
         stateLock.lock()
         generation += 1
         let current = generation
         endRequested = false
         stateLock.unlock()
-        queue.async { [weak self] in self?.begin(generation: current, at: point) }
+        queue.async { [weak self] in self?.begin(generation: current, at: point, target: target) }
     }
 
     func eventTapDidEndRecording() {
@@ -61,7 +63,7 @@ final class VoiceController: EventTapDelegate {
 
     // MARK: Voice queue
 
-    private func begin(generation current: Int, at point: CGPoint) {
+    private func begin(generation current: Int, at point: CGPoint, target: RecordingTarget?) {
         let snapshot = settings.snapshot
         watchButtonState = ensureButtonStillDown(at: point, generation: current)
         let selection = DispatchQueue.main.sync { VoiceTarget.select(settings: settings) }
@@ -95,6 +97,7 @@ final class VoiceController: EventTapDelegate {
         holdStartedAt = ProcessInfo.processInfo.systemUptime
         let choice = selection.reason == .chosen ? "" : "，自动：\(selection.explanation)"
         Log.info("holding hotkey \(resolution.hotkey.displayName) for \(ime.name) (\(resolution.origin)\(choice))")
+        commitChecker.recordingStarted(target: target, ime: ime)
         startWatchdog()
         recordingNotified = true
         notify(true)
@@ -129,6 +132,7 @@ final class VoiceController: EventTapDelegate {
         recordingNotified = false
         let held = ProcessInfo.processInfo.systemUptime - holdStartedAt
         Log.info(String(format: "released hotkey after %.2fs (%@)", held, reason))
+        commitChecker.recordingEnded()
         notify(false)
     }
 

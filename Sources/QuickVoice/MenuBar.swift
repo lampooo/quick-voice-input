@@ -9,6 +9,8 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     private unowned let app: AppDelegate
     private var isRecording = false
     private var menuTargetApp: NSRunningApplication?
+    /// Whether the last recording's text reached the field.
+    var lastCommit: CommitReport?
 
     init(settings: AppSettings, app: AppDelegate) {
         self.settings = settings
@@ -97,6 +99,9 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         }
         if installed.isEmpty {
             menu.addItem(info("未检测到" + VoiceIME.all.map(\.name).joined(separator: "或")))
+        }
+        if let lastCommit {
+            menu.addItem(info("最近一次（\(lastCommit.ime.name)）：\(lastCommit.outcome.summary)"))
         }
         menu.addItem(.separator())
 

@@ -39,6 +39,8 @@ final class SetupModel: ObservableObject {
     @Published var statuses = IMEStatus.inspectAll()
     /// The input method whose hotkey the 「语音快捷键」 step edits and tests.
     @Published var editingIME: VoiceIME
+    /// Whether the last long press put text into the field.
+    @Published var lastCommit: CommitReport?
 
     let settings: AppSettings
     let diagnostics: HotkeyDiagnostics
@@ -802,7 +804,11 @@ private struct TryItStep: View {
                 StatusRow(ok: false, text: "长按语音输入已暂停，可以在菜单栏图标里重新启用。")
             }
             TestTextView(handle: model.tryField).frame(height: 160)
+            if let report = model.lastCommit {
+                StatusRow(ok: commitOK(report.outcome), text: "上一次长按（\(report.ime.name)）：\(report.outcome.summary)")
+            }
             VStack(alignment: .leading, spacing: 6) {
+                Label("松开后 5 秒内会比较输入框的字数，判断文字有没有上屏（只看字数，不读取内容），结果也写在日志里。", systemImage: "checkmark.circle")
                 Label("按住期间可以移动鼠标，不会选中文字。", systemImage: "cursorarrow.motionlines")
                 Label("快速点击、双击、拖选都和平时一样，不会触发。", systemImage: "hand.tap")
                 Label("用触控板时，开始录音的瞬间会轻震一下。", systemImage: "waveform")
@@ -810,6 +816,14 @@ private struct TryItStep: View {
             }
             .font(.callout)
             .foregroundStyle(.secondary)
+        }
+    }
+
+    private func commitOK(_ outcome: CommitCheck.Outcome) -> Bool? {
+        switch outcome {
+        case .committed: return true
+        case .unchanged: return false
+        case .changed, .unavailable: return nil
         }
     }
 }

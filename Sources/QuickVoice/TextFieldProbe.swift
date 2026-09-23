@@ -10,6 +10,8 @@ final class TextFieldProbe {
         var bundleID: String?
         var detail: String
         var elapsedMilliseconds = 0
+        /// The app the press went to, when known.
+        var pid: pid_t?
     }
 
     private let queue = DispatchQueue(label: "quickvoice.probe", qos: .userInteractive)
@@ -53,6 +55,12 @@ final class TextFieldProbe {
         guard let pid = eventTarget ?? Self.topWindowOwner(at: point) else {
             return Result(verdict: .skip, bundleID: nil, detail: "no app under pointer")
         }
+        var result = evaluate(point, pid: pid, via: via)
+        result.pid = pid
+        return result
+    }
+
+    private func evaluate(_ point: CGPoint, pid: pid_t, via: String) -> Result {
         // Never query ourselves through Accessibility: see OwnTestFields.
         if pid == ownPID {
             return OwnTestFields.shared.contains(point)
