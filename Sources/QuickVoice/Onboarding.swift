@@ -47,8 +47,10 @@ final class SetupModel: ObservableObject {
     }
 
     func refresh() {
-        axTrusted = Permissions.isAccessibilityTrusted
-        weType = WeTypeStatus.inspect()
+        let trusted = Permissions.isAccessibilityTrusted
+        if trusted != axTrusted { axTrusted = trusted }
+        let status = WeTypeStatus.inspect()
+        if status != weType { weType = status }
     }
 
     func isDone(_ step: SetupStep) -> Bool {

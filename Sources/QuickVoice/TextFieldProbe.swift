@@ -55,9 +55,15 @@ final class TextFieldProbe {
         let app = NSRunningApplication(processIdentifier: pid)
         let bundleID = app?.bundleIdentifier
         switch settings.rule(for: bundleID) {
-        case .never: return Result(verdict: .skip, bundleID: bundleID, detail: "rule: never")
-        case .anywhere: return Result(verdict: .trigger, bundleID: bundleID, detail: "rule: anywhere")
-        case .auto: break
+        case .never:
+            return Result(verdict: .skip, bundleID: bundleID, detail: "rule: never")
+        case .anywhere:
+            if let hit, string(hit, kAXSubroleAttribute) == kAXSecureTextFieldSubrole {
+                return Result(verdict: .skip, bundleID: bundleID, detail: "password field")
+            }
+            return Result(verdict: .trigger, bundleID: bundleID, detail: "rule: anywhere")
+        case .auto:
+            break
         }
 
         let appElement = AXUIElementCreateApplication(pid)

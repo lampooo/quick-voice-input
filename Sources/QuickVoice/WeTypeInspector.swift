@@ -2,7 +2,7 @@ import AppKit
 import QuickVoiceCore
 
 /// Read-only view of the local WeType installation and its voice shortcut settings.
-struct WeTypeStatus {
+struct WeTypeStatus: Equatable {
     var appURL: URL?
     var version: String?
     var isEnabled = false
