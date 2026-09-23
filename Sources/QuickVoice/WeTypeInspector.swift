@@ -1,13 +1,16 @@
 import AppKit
 import QuickVoiceCore
 
-/// Reads WeType's settings file (read-only), re-parsing only when it changes. Safe on any thread.
+/// Reads WeType's settings file (read-only). The file is read on every call, so a changed shortcut
+/// applies to the very next long press, and it is re-parsed only when its bytes changed. The
+/// modification date is not used: MMKV writes through a memory map, and the system updates the
+/// date only some time after the content changed. Safe on any thread.
 final class WeTypeConfigCache {
     static let shared = WeTypeConfigCache()
 
     let url = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(WeTypeVoiceConfig.settingsRelativePath)
     private let lock = NSLock()
-    private var cachedDate: Date?
+    private var cachedData: Data?
     private var cached: Result<WeTypeVoiceConfig, Error>?
 
     func current() -> WeTypeVoiceConfig? {
@@ -15,13 +18,19 @@ final class WeTypeConfigCache {
     }
 
     func load() -> Result<WeTypeVoiceConfig, Error> {
-        let modified = (try? FileManager.default.attributesOfItem(atPath: url.path))?[.modificationDate] as? Date
+        // A plain read, not a memory map: WeType may resize the file while we look at it.
+        let data: Data
+        do {
+            data = try Data(contentsOf: url)
+        } catch {
+            return .failure(error)
+        }
         lock.lock()
         defer { lock.unlock() }
-        if let cached, let modified, modified == cachedDate { return cached }
-        let result = Result { try WeTypeVoiceConfig.load(fromFile: url) }
+        if let cached, data == cachedData { return cached }
+        let result = Result { WeTypeVoiceConfig.parse(try MMKVReader.parse(data)) }
         cached = result
-        cachedDate = modified
+        cachedData = data
         return result
     }
 }

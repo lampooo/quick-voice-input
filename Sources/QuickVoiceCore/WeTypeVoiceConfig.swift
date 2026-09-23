@@ -52,8 +52,7 @@ public struct WeTypeVoiceConfig: Equatable, Sendable {
     }
 
     public static func load(fromFile url: URL) throws -> WeTypeVoiceConfig {
-        let data = try Data(contentsOf: url, options: .mappedIfSafe)
-        return parse(try MMKVReader.parse(data))
+        parse(try MMKVReader.parse(try Data(contentsOf: url)))
     }
 
     static func shortcut(_ values: [String: Data], prefix: String, enabledKey: String) -> WeTypeShortcut? {
