@@ -22,6 +22,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         Log.info("launch \(Bundle.main.bundleIdentifier ?? "?") \(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "")")
+        HeldKeyMonitor.shared.start()
         NSApp.mainMenu = Self.makeMainMenu()
         menuBar = MenuBarController(settings: settings, app: self)
 

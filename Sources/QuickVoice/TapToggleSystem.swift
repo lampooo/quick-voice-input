@@ -52,16 +52,13 @@ final class LiveTapToggleEnvironment: TapToggleEnvironment {
     }
 
     /// The HID state holds the physical keyboard (and what this app posted at the HID level), so a
-    /// key that is down for real shows up here.
+    /// key that is down for real shows up here. A key it has reported down for longer than
+    /// `HeldKeyTracker.defaultStaleAfter` is a stale entry and does not count.
     func realInputIdle() -> Bool {
         let flags = CGEventSource.flagsState(.hidSystemState)
         let busy: CGEventFlags = [.maskCommand, .maskShift, .maskControl, .maskAlternate, .maskSecondaryFn]
         if !flags.intersection(busy).isEmpty { return false }
-        // Caps Lock is a lock, not a key being held.
-        for code in 0..<128 where code != Int(KeyCode.capsLock) {
-            if CGEventSource.keyState(.hidSystemState, key: CGKeyCode(code)) { return false }
-        }
-        return true
+        return HeldKeyMonitor.shared.heldKeys().isEmpty
     }
 
     func tap(_ hotkey: Hotkey, holdFor seconds: TimeInterval) {
