@@ -16,9 +16,32 @@ public enum HotkeyTestOutcome: Equatable, Sendable {
     case micBusy
     case skipped(String)
 
+    public static let realKeysHeldReason = "测试时键盘上有按键没有松开"
+
     public var isPushToTalk: Bool {
         if case .pushToTalk = self { return true }
         return false
+    }
+
+    public var skipReason: String? {
+        if case let .skipped(reason) = self { return reason }
+        return nil
+    }
+
+    /// What to say when every key that was tried got skipped: the test never got a result, so it
+    /// says nothing against the shortcut and the user should not be told to change it.
+    public static func noResultSummary(_ outcomes: [HotkeyTestOutcome]) -> String? {
+        let reasons = outcomes.compactMap(\.skipReason)
+        guard !outcomes.isEmpty, reasons.count == outcomes.count else { return nil }
+        var unique: [String] = []
+        for reason in reasons where !unique.contains(reason) {
+            unique.append(reason)
+        }
+        var text = "测试没有得到结果（\(unique.joined(separator: "；"))），这不说明快捷键有问题，不需要因此改快捷键。处理好后再测一次。"
+        if unique.contains(realKeysHeldReason) {
+            text += "如果并没有按着任何键也这样，可能是某个键盘（比如蓝牙键盘）的松开没有送到：按下超过 10 秒的键会被忽略，刚打开本应用时请等 10 秒再测。"
+        }
+        return text
     }
 
     /// The key does what the input method's trigger mode needs: hold-to-talk, or tap to start and tap to stop.
@@ -66,7 +89,7 @@ public enum HotkeyTestOutcome: Equatable, Sendable {
         case .notStarted:
             return .noResponse
         case .realKeysHeld:
-            return .skipped("测试时键盘上有按键没有松开")
+            return .skipped(realKeysHeldReason)
         case .aborted:
             return .skipped("测试已取消")
         case let .started(startLatency):

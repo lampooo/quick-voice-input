@@ -11,6 +11,8 @@ final class HotkeyDiagnostics: ObservableObject {
         let hotkey: Hotkey
         var outcome: HotkeyTestOutcome?
         var isTesting = false
+        /// The outcome came from running the test, not from ruling the key out beforehand.
+        var wasTried = false
     }
 
     /// The input method the candidates were tested with.
@@ -151,6 +153,7 @@ final class HotkeyDiagnostics: ObservableObject {
             Log.info("hotkey test \(ime.id) \(candidate.hotkey.displayName): \(outcome)")
             onMain {
                 self.candidates[index].outcome = outcome
+                self.candidates[index].wasTried = true
                 self.candidates[index].isTesting = false
                 self.clearTestField?()
             }
@@ -253,6 +256,9 @@ final class HotkeyDiagnostics: ObservableObject {
             lines.append("「\(toggle.hotkey.displayName)」是\(ime.name)的「\(ime.toggleName)」快捷键（按一下开始、再按结束），不适合长按。请在\(ime.name)设置里把「\(ime.pushToTalkName)」改成「\(recommended)」后重新测试。")
         } else if candidates.contains(where: { $0.outcome == .micBusy }) {
             lines.append("测试时麦克风被其它应用占用，结果不可靠。请关闭正在使用麦克风的应用（会议、录音软件等）后重新测试。")
+        } else if candidates.first(where: { $0.hotkey == current })?.wasTried == true,
+                  let noResult = HotkeyTestOutcome.noResultSummary(candidates.filter(\.wasTried).compactMap(\.outcome)) {
+            lines.append(noResult)
         } else if ime.isStandalone {
             lines.append("没有候选键能触发\(ime.name)录音。请确认\(ime.name)正在运行、已经登录并授权，再打开它的设置，把「\(shortcutName)」的快捷键改成「\(recommended)」，然后重新测试。")
         } else {

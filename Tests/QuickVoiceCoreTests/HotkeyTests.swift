@@ -153,6 +153,26 @@ final class HotkeyTests: XCTestCase {
         XCTAssertEqual(Outcome.tapStuck(startLatency: 0.5).summary(for: .bageshuo), "点按一次能开始录音（0.5 秒），但再点按没能结束：请手动在网易叭哥说里结束这次录音")
     }
 
+    func testNoResultSummaryOnlyWhenEveryTriedKeyWasSkipped() throws {
+        typealias Outcome = HotkeyTestOutcome
+        let held = Outcome.evaluate(start: .realKeysHeld, stop: nil, stopLatency: 0)
+        XCTAssertEqual(held.skipReason, Outcome.realKeysHeldReason)
+        XCTAssertNil(Outcome.noResponse.skipReason)
+
+        let summary = try XCTUnwrap(Outcome.noResultSummary([held, held]))
+        XCTAssertTrue(summary.hasPrefix("测试没有得到结果（\(Outcome.realKeysHeldReason)）"))
+        XCTAssertTrue(summary.contains("不需要因此改快捷键"))
+        XCTAssertTrue(summary.contains("10 秒"))
+        XCTAssertFalse(summary.contains("⌃"))
+
+        let cancelled = try XCTUnwrap(Outcome.noResultSummary([.skipped("测试已取消")]))
+        XCTAssertFalse(cancelled.contains("10 秒"))
+
+        XCTAssertNil(Outcome.noResultSummary([]))
+        XCTAssertNil(Outcome.noResultSummary([held, .noResponse]))
+        XCTAssertNil(Outcome.noResultSummary([.tapToggle(startLatency: 0.2, stopLatency: 0.1)]))
+    }
+
     func testHotkeyCodableRoundTrip() throws {
         let hotkey = Hotkey(modifiers: [.rightControl, .rightOption], key: 49)
         let data = try JSONEncoder().encode(hotkey)
