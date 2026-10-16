@@ -138,23 +138,23 @@ final class BageshuoTests: XCTestCase {
     // MARK: Recommended chord
 
     func testTheRecommendedChordIsReadFromBageshuosSettings() throws {
-        let config = try parse(["polishHotkeys": ["LeftControl+LeftOption+LeftShift+V"]])
-        XCTAssertEqual(config.toggle?.hotkey, VoiceIME.bageshuo.defaultHotkey)
+        let config = try parse(["polishHotkeys": ["LeftCommand+LeftControl+L"]])
+        XCTAssertEqual(config.toggle?.hotkey, VoiceIME.bageshuo.defaultHotkey, "Bageshuo lists Command first; the order does not matter")
         let followed = HotkeyResolver.resolve(.standard(for: .bageshuo), ime: .bageshuo, config: config)
         XCTAssertEqual(followed, HotkeyResolution(ime: .bageshuo, hotkey: VoiceIME.bageshuo.defaultHotkey, followsIME: true))
+        XCTAssertEqual(try parse(["polishHotkeys": ["LeftControl+LeftCommand+L"]]).toggle?.hotkey, VoiceIME.bageshuo.defaultHotkey)
         XCTAssertEqual(try parse(["polishHotkeys": ["LeftControl+LeftAlt+V"]]).toggle?.hotkey, HotkeyPreset.controlOptionV.hotkey)
-        XCTAssertNotEqual(try parse(["polishHotkeys": ["RightControl+LeftOption+LeftShift+V"]]).toggle?.hotkey, VoiceIME.bageshuo.defaultHotkey,
+        XCTAssertNotEqual(try parse(["polishHotkeys": ["RightControl+LeftCommand+L"]]).toggle?.hotkey, VoiceIME.bageshuo.defaultHotkey,
                           "Bageshuo tells left from right, so a right-hand modifier is a different shortcut")
     }
 
     func testTheRecommendedChordIsOneCleanTap() {
         let chord = VoiceIME.bageshuo.defaultHotkey
-        XCTAssertEqual(chord.displayName, "左 Control + 左 Option + 左 Shift + V")
-        XCTAssertEqual(chord.pressSequence.map(\.keyCode), [59, 58, 56, 9])
-        XCTAssertEqual(chord.pressSequence.map(\.kind), [.flagsChanged, .flagsChanged, .flagsChanged, .keyDown])
-        XCTAssertEqual(chord.releaseSequence.map(\.keyCode), [9, 56, 58, 59])
-        let all = EventFlagBits.control | EventFlagBits.option | EventFlagBits.shift
-            | EventFlagBits.deviceLeftControl | EventFlagBits.deviceLeftOption | EventFlagBits.deviceLeftShift
+        XCTAssertEqual(chord.displayName, "左 Control + 左 Command + L")
+        XCTAssertEqual(chord.pressSequence.map(\.keyCode), [59, 55, 37])
+        XCTAssertEqual(chord.pressSequence.map(\.kind), [.flagsChanged, .flagsChanged, .keyDown])
+        XCTAssertEqual(chord.releaseSequence.map(\.keyCode), [37, 55, 59])
+        let all = EventFlagBits.control | EventFlagBits.command | EventFlagBits.deviceLeftControl | EventFlagBits.deviceLeftCommand
         XCTAssertEqual(chord.pressSequence.last?.flags, all | EventFlagBits.nonCoalesced)
         XCTAssertEqual(chord.releaseSequence.last?.flags, EventFlagBits.nonCoalesced)
     }
@@ -165,20 +165,21 @@ final class BageshuoTests: XCTestCase {
             XCTAssertNotEqual(chord, other.defaultHotkey, other.id)
             XCTAssertTrue(Set(chord.modifiers).isDisjoint(with: other.defaultHotkey.modifiers), other.id)
         }
-        XCTAssertFalse(chord.modifiers.contains { $0 == .leftCommand || $0 == .rightCommand })
+        XCTAssertEqual(chord.pressOrder.first, .leftControl, "Command is never held on its own")
         XCTAssertEqual(VoiceIME.bageshuo.risks(of: chord), [])
         let configs: [VoiceIME: IMEVoiceConfig] = [
             .weType: IMEVoiceConfig(pushToTalk: VoiceShortcut(keyCodes: [61]), toggle: VoiceShortcut(keyCodes: [63, 49]), commandSelectsCandidates: true),
             .doubao: doubaoConfig(commandCandidates: true),
-            .bageshuo: IMEVoiceConfig(toggle: VoiceShortcut(keyCodes: [59, 58, 56, 9])),
+            .bageshuo: IMEVoiceConfig(toggle: VoiceShortcut(keyCodes: [55, 59, 37])),
         ]
-        XCTAssertEqual(IMEConflicts.find(hotkey: chord, ime: .bageshuo, configs: configs), [])
+        XCTAssertEqual(IMEConflicts.find(hotkey: chord, ime: .bageshuo, configs: configs), [],
+                       "candidate selection needs Command alone, which a Control-first chord never is")
     }
 
     func testOnlyAStandaloneAppSwallowsTheLetterInItsChord() {
         let chord = VoiceIME.bageshuo.defaultHotkey
-        XCTAssertEqual(chord.risks, [.mayTriggerShortcut("V")])
-        XCTAssertEqual(VoiceIME.weType.risks(of: chord), [.mayTriggerShortcut("V")])
+        XCTAssertEqual(chord.risks, [.mayTriggerShortcut("L")])
+        XCTAssertEqual(VoiceIME.weType.risks(of: chord), [.mayTriggerShortcut("L")])
         XCTAssertEqual(VoiceIME.bageshuo.risks(of: Hotkey(modifiers: [.leftControl], key: KeyCode.space)), [.systemShortcut("选择上一个输入法")])
     }
 

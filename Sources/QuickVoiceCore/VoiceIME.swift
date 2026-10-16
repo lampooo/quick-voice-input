@@ -167,17 +167,17 @@ extension VoiceIME {
         helperBundleIDs: [],
         pushToTalkName: "语音输入",
         toggleName: "语音输入",
-        defaultHotkey: Hotkey(modifiers: [.leftControl, .leftOption, .leftShift], key: KeyCode.v),
+        defaultHotkey: Hotkey(modifiers: [.leftControl, .leftCommand], key: KeyCode.l),
         setupSteps: [
             "点「打开网易叭哥说」，进入「设置 → 快捷键」。",
-            "点「语音输入」的快捷键框，用键盘左侧的 Control（⌃）、Option（⌥）、Shift（⇧）三个键加上 V 键录入，然后松开。叭哥说区分左右，要用左侧的修饰键。如果录不进三个修饰键的组合，改用 ⌃⌥ + V。",
+            "点「语音输入」的快捷键框，按住键盘左侧的 Control（⌃）和 Command（⌘），再按 L，然后松开。叭哥说最多录 3 个键，并且区分左右。",
             "回到这里点「重新读取」。选的是「跟随网易叭哥说」的话，这里会自动跟着变。",
         ],
         recommendationNotes: [
-            "叭哥说是点按开关：组合键点按一次就是一次完整的按键，程序合成比单独点按一个修饰键可靠。",
+            "叭哥说是点按开关：组合键点按一次就是一次完整的按键，程序合成比单独点按一个修饰键可靠；它最多录 3 个键，这个组合正好 3 个。",
             "右 Option、右 Command 是微信输入法、豆包输入法推荐的语音键。三个软件各自监听，用同一个键会同时响应；这个组合和它们不重叠。",
-            "不用左 Command：它和 ⌘ + 点击、各种 ⌘ 组合键冲突。也不用 ⌃ + 空格、⌃⌥ + 空格：它们是 macOS 切换输入法的快捷键。",
-            "⌃⌥⇧ + V 不是 macOS 自带的快捷键，常见软件也很少用；其中的 V 由叭哥说自己拦下，不会打进输入框。",
+            "合成时先结束鼠标点击，再按 ⌃、⌘、L；Command 最后按下、最先松开，不会变成 Command + 点击，也不会被输入法当成选候选词。",
+            "「终端」的「清除屏幕」也是 ⌃⌘L。叭哥说会拦下它绑定的 L，前台软件收不到；叭哥说没在运行，或者这里的键和它设置里的不一致时，本应用不点按。",
         ],
         downloadURL: "",
         versionAdvice: { _ in nil }
@@ -299,8 +299,11 @@ public struct IMEConflict: Equatable, Sendable {
 }
 
 public enum IMEConflicts {
-    private static func usesCommand(_ hotkey: Hotkey) -> Bool {
-        hotkey.modifiers.contains { $0 == .leftCommand || $0 == .rightCommand }
+    /// Input methods select a candidate when Command goes down with no other modifier held. A chord
+    /// presses Control, Option and Shift first, so only a hotkey whose modifiers are all Command
+    /// keys ever holds Command on its own.
+    private static func pressesCommandAlone(_ hotkey: Hotkey) -> Bool {
+        hotkey.pressOrder.first?.isCommand ?? false
     }
 
     /// Every way `hotkey` may misbehave for `ime`, from what the supported engines' own settings say.
@@ -313,7 +316,7 @@ public enum IMEConflicts {
                 detail: "按住它会变成按一次开始、再按一次才结束"
             ))
         }
-        if usesCommand(hotkey) {
+        if pressesCommandAlone(hotkey) {
             // A standalone app hears the key in every input method, so it can collide with the
             // candidate selection of any input method; an input method only with its own.
             let owners = ime.isStandalone ? VoiceIME.inputMethods : [ime]

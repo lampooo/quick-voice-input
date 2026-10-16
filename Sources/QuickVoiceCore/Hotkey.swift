@@ -26,6 +26,7 @@ public enum EventFlagBits {
 
 public enum KeyCode {
     public static let v: UInt16 = 9
+    public static let l: UInt16 = 37
     public static let space: UInt16 = 49
     public static let capsLock: UInt16 = 57
     public static let function: UInt16 = 63
@@ -71,6 +72,23 @@ public enum ModifierKey: String, Codable, CaseIterable, Sendable {
         case .rightControl: return EventFlagBits.deviceRightControl
         }
     }
+
+    /// Position in the order modifiers are pressed: Control, Option, Shift, then Command, left
+    /// before right (the order macOS shows them in, ⌃⌥⇧⌘).
+    public var pressRank: Int {
+        switch self {
+        case .leftControl: return 0
+        case .rightControl: return 1
+        case .leftOption: return 2
+        case .rightOption: return 3
+        case .leftShift: return 4
+        case .rightShift: return 5
+        case .leftCommand: return 6
+        case .rightCommand: return 7
+        }
+    }
+
+    public var isCommand: Bool { self == .leftCommand || self == .rightCommand }
 
     public var isRight: Bool {
         switch self {
@@ -123,7 +141,8 @@ public struct KeyStroke: Equatable, Sendable {
     }
 }
 
-/// A voice hotkey: zero or more modifiers pressed in order, optionally followed by one ordinary key.
+/// A voice hotkey: zero or more modifiers, optionally followed by one ordinary key. The order the
+/// modifiers are listed in does not matter: they are always pressed in `pressOrder`.
 public struct Hotkey: Codable, Hashable, Sendable {
     public var modifiers: [ModifierKey]
     public var key: UInt16?
@@ -131,6 +150,27 @@ public struct Hotkey: Codable, Hashable, Sendable {
     public init(modifiers: [ModifierKey], key: UInt16? = nil) {
         self.modifiers = modifiers
         self.key = key
+    }
+
+    public static func == (lhs: Hotkey, rhs: Hotkey) -> Bool {
+        lhs.key == rhs.key && lhs.pressOrder == rhs.pressOrder
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(pressOrder)
+        hasher.combine(key)
+    }
+
+    /// Command goes down last and comes up first, so it is never held on its own: input methods
+    /// treat a lone Command press as 「选候选词」 (WeType checks that Command is the only modifier),
+    /// and every event that carries Command also carries the rest of the chord.
+    public var pressOrder: [ModifierKey] {
+        modifiers.sorted { $0.pressRank < $1.pressRank }
+    }
+
+    /// `flags` without the bits this hotkey's modifiers set.
+    public func removingModifierFlags(from flags: UInt64) -> UInt64 {
+        flags & ~modifiers.reduce(UInt64(0)) { $0 | $1.genericFlag | $1.deviceFlag }
     }
 
     public var isValid: Bool {
@@ -147,7 +187,7 @@ public struct Hotkey: Codable, Hashable, Sendable {
     }
 
     public var displayName: String {
-        var parts = modifiers.map(\.displayName)
+        var parts = pressOrder.map(\.displayName)
         if let key { parts.append(KeyNames.name(for: Int(key))) }
         return parts.joined(separator: " + ")
     }
@@ -160,7 +200,7 @@ public struct Hotkey: Codable, Hashable, Sendable {
     public var pressSequence: [KeyStroke] {
         var strokes: [KeyStroke] = []
         var held: [ModifierKey] = []
-        for modifier in modifiers {
+        for modifier in pressOrder {
             held.append(modifier)
             strokes.append(KeyStroke(.flagsChanged, keyCode: modifier.keyCode, flags: Hotkey.flags(for: held)))
         }
@@ -172,11 +212,11 @@ public struct Hotkey: Codable, Hashable, Sendable {
 
     public var releaseSequence: [KeyStroke] {
         var strokes: [KeyStroke] = []
-        var held = modifiers
+        var held = pressOrder
         if let key {
             strokes.append(KeyStroke(.keyUp, keyCode: key, flags: Hotkey.flags(for: held)))
         }
-        for modifier in modifiers.reversed() {
+        for modifier in pressOrder.reversed() {
             held.removeAll { $0 == modifier }
             strokes.append(KeyStroke(.flagsChanged, keyCode: modifier.keyCode, flags: Hotkey.flags(for: held)))
         }
@@ -263,17 +303,17 @@ public struct HotkeyPreset: Identifiable, Hashable, Sendable {
         note: "程序可以模拟；平时单独点按它不会触发任何功能。"
     )
 
-    public static let controlOptionShiftV = HotkeyPreset(
-        id: "controlOptionShiftV",
-        hotkey: Hotkey(modifiers: [.leftControl, .leftOption, .leftShift], key: KeyCode.v),
-        name: "左侧 ⌃⌥⇧ + V",
-        note: "程序可以模拟，是一次完整的组合键点按。和右 Option、右 Command 不重叠，也不是 macOS 或常见软件的快捷键，不会和 ⌘ 组合键冲突。"
+    public static let controlCommandL = HotkeyPreset(
+        id: "controlCommandL",
+        hotkey: Hotkey(modifiers: [.leftControl, .leftCommand], key: KeyCode.l),
+        name: "左侧 ⌃⌘ + L",
+        note: "程序可以模拟，是一次完整的组合键点按，网易叭哥说最多 3 个键正好够。和右 Option、右 Command 不重叠；Command 最后按下、最先松开，不会被输入法当成选候选词。「终端」的「清除屏幕」也是 ⌃⌘L，靠叭哥说拦下 L，叭哥说没在运行时不会点按。"
     )
     public static let controlOptionV = HotkeyPreset(
         id: "controlOptionV",
         hotkey: Hotkey(modifiers: [.leftControl, .leftOption], key: KeyCode.v),
         name: "左侧 ⌃⌥ + V",
-        note: "少一个修饰键、更好按；如果网易叭哥说录不进三个修饰键的组合，就用这个。"
+        note: "程序可以模拟，不含 Command，macOS 和常见软件很少用它。不想用带 Command 的组合时可以用这个。"
     )
 
     /// Keys for engines you hold (WeType, Doubao): the right-hand modifiers stay out of the way of
@@ -283,8 +323,8 @@ public struct HotkeyPreset: Identifiable, Hashable, Sendable {
     /// Keys for an app that is tapped once to start and once to stop. The right Option and right
     /// Command keys are left out: WeType and Doubao hold them for their own hold-to-talk, and all
     /// three listen at once. A chord is one clean tap; a lone left Command also fires on ⌘+click
-    /// and competes with ⌘ combos and candidate selection.
-    public static let tapToggle: [HotkeyPreset] = [controlOptionShiftV, controlOptionV, leftCommand, leftOption]
+    /// and competes with ⌘ combos and candidate selection. Bageshuo records at most three keys.
+    public static let tapToggle: [HotkeyPreset] = [controlCommandL, controlOptionV, leftCommand, leftOption]
 
     public static func presets(for ime: VoiceIME) -> [HotkeyPreset] {
         ime.trigger == .hold ? all : tapToggle

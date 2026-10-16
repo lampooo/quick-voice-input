@@ -16,11 +16,12 @@ final class VoiceIMETests: XCTestCase {
         }
         XCTAssertEqual(VoiceIME.doubao.defaultHotkey, Hotkey(modifiers: [.rightCommand]))
         XCTAssertEqual(VoiceIME.weType.defaultHotkey, Hotkey(modifiers: [.rightOption]))
-        XCTAssertEqual(VoiceIME.bageshuo.defaultHotkey, Hotkey(modifiers: [.leftControl, .leftOption, .leftShift], key: KeyCode.v))
+        XCTAssertEqual(VoiceIME.bageshuo.defaultHotkey, Hotkey(modifiers: [.leftControl, .leftCommand], key: KeyCode.l))
+        XCTAssertLessThanOrEqual(VoiceIME.bageshuo.defaultHotkey.keyCodes.count, 3, "Bageshuo records at most three keys")
         XCTAssertFalse(VoiceIME.bageshuo.recommendationNotes.isEmpty)
         XCTAssertTrue(VoiceIME.weType.recommendationNotes.isEmpty)
         XCTAssertTrue(VoiceIME.doubao.recommendationNotes.isEmpty)
-        XCTAssertTrue(VoiceIME.bageshuo.setupSteps.contains { $0.contains("⌃⌥ + V") }, "the fallback chord is named in the steps")
+        XCTAssertTrue(VoiceIME.bageshuo.setupSteps.contains { $0.contains("最多录 3 个键") })
         XCTAssertEqual(VoiceIME.inputMethods, [.weType, .doubao])
     }
 

@@ -39,6 +39,29 @@ final class HotkeyTests: XCTestCase {
         ])
     }
 
+    func testCommandIsPressedLastAndReleasedFirst() {
+        let listedCommandFirst = Hotkey(modifiers: [.leftCommand, .leftControl], key: KeyCode.l)
+        let listedControlFirst = Hotkey(modifiers: [.leftControl, .leftCommand], key: KeyCode.l)
+        XCTAssertEqual(listedCommandFirst, listedControlFirst)
+        XCTAssertEqual(listedCommandFirst.hashValue, listedControlFirst.hashValue)
+        XCTAssertEqual(listedCommandFirst.displayName, "左 Control + 左 Command + L")
+        XCTAssertEqual(listedCommandFirst.pressSequence.map(\.keyCode), [59, 55, 37])
+        XCTAssertEqual(listedCommandFirst.releaseSequence.map(\.keyCode), [37, 55, 59])
+        for stroke in listedCommandFirst.pressSequence + listedCommandFirst.releaseSequence where stroke.flags & EventFlagBits.command != 0 {
+            XCTAssertNotEqual(stroke.flags & EventFlagBits.control, 0, "Command is never held without Control")
+        }
+        XCTAssertEqual(Hotkey(modifiers: [.leftShift, .leftOption, .leftControl]).pressOrder, [.leftControl, .leftOption, .leftShift])
+        XCTAssertNotEqual(Hotkey(modifiers: [.leftCommand]), Hotkey(modifiers: [.rightCommand]))
+    }
+
+    func testRemovingModifierFlagsKeepsOtherBits() {
+        let hotkey = Hotkey(modifiers: [.leftControl, .leftCommand], key: KeyCode.l)
+        let chord = EventFlagBits.control | EventFlagBits.deviceLeftControl | EventFlagBits.command | EventFlagBits.deviceLeftCommand
+        let other = EventFlagBits.nonCoalesced | EventFlagBits.shift | EventFlagBits.deviceLeftShift
+        XCTAssertEqual(hotkey.removingModifierFlags(from: chord | other), other)
+        XCTAssertEqual(Hotkey(modifiers: [.rightOption]).removingModifierFlags(from: other), other)
+    }
+
     func testBothShiftsKeepGenericFlagUntilLastRelease() {
         let hotkey = Hotkey(modifiers: [.leftShift, .rightShift])
         let release = hotkey.releaseSequence
@@ -91,10 +114,13 @@ final class HotkeyTests: XCTestCase {
     }
 
     func testTapToggleEnginesGetTheirOwnPresets() {
-        XCTAssertEqual(HotkeyPreset.matching(VoiceIME.bageshuo.defaultHotkey), .controlOptionShiftV)
-        XCTAssertEqual(HotkeyPreset.controlOptionShiftV.title(for: .bageshuo), "左侧 ⌃⌥⇧ + V（推荐）")
+        XCTAssertEqual(HotkeyPreset.matching(VoiceIME.bageshuo.defaultHotkey), .controlCommandL)
+        XCTAssertEqual(HotkeyPreset.controlCommandL.title(for: .bageshuo), "左侧 ⌃⌘ + L（推荐）")
         XCTAssertEqual(HotkeyPreset.leftCommand.title(for: .bageshuo), "左 Command")
-        XCTAssertEqual(HotkeyPreset.tapToggle.first, .controlOptionShiftV)
+        XCTAssertEqual(HotkeyPreset.tapToggle.first, .controlCommandL)
+        for preset in HotkeyPreset.tapToggle {
+            XCTAssertLessThanOrEqual(preset.hotkey.keyCodes.count, 3, "Bageshuo records at most three keys: \(preset.id)")
+        }
         for taken in [HotkeyPreset.rightOption, .rightCommand] {
             XCTAssertFalse(HotkeyPreset.tapToggle.contains(taken), "\(taken.id) is the WeType or Doubao voice key")
         }

@@ -185,6 +185,13 @@ final class EventTap {
         let output: MachineOutput
         switch type {
         case .leftMouseDown:
+            // A click that lands while a synthesized hotkey is down would carry its modifiers and
+            // become a ⌘-click or a ⌃-click (a right click). A tap only starts when no real key is
+            // down, so those flags are ours.
+            if let held = keySynth.heldHotkey, !held.modifiers.isEmpty {
+                event.flags = CGEventFlags(rawValue: held.removingModifierFlags(from: event.flags.rawValue))
+                Log.info("removed \(held.displayName) from a click during a synthesized key press")
+            }
             let snapshot = settings.snapshot
             machine.config.holdDuration = snapshot.holdDuration
             pressWindowNumber = Self.targetWindowNumber(of: event)
