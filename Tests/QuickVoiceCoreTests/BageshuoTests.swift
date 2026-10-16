@@ -114,6 +114,21 @@ final class BageshuoTests: XCTestCase {
         XCTAssertEqual(unreadable.fallbackReason, "没能读取网易叭哥说的设置，暂时点按「左 Command」")
     }
 
+    func testAnUnboundChordFallbackIsNotTapped() throws {
+        let setting = IMEHotkeySetting(source: .followIME, manual: HotkeyPreset.optionSpace.hotkey)
+        let fn = HotkeyResolver.resolve(setting, ime: .bageshuo, config: try parse(["polishHotkeys": ["Fn"]]))
+        XCTAssertEqual(fn.fallbackReason, "网易叭哥说的「语音输入」是「Fn」，Fn 无法被程序模拟，在网易叭哥说里设好快捷键之前不会点按")
+    }
+
+    func testAChordIsOnlyTappedWhenBageshuoIsBoundToIt() {
+        let chord = HotkeyPreset.optionSpace.hotkey
+        XCTAssertFalse(VoiceIME.bageshuo.wouldLeakKey(of: chord, bound: chord))
+        XCTAssertTrue(VoiceIME.bageshuo.wouldLeakKey(of: chord, bound: nil))
+        XCTAssertTrue(VoiceIME.bageshuo.wouldLeakKey(of: chord, bound: Hotkey(modifiers: [.rightOption], key: KeyCode.space)))
+        XCTAssertFalse(VoiceIME.bageshuo.wouldLeakKey(of: Hotkey(modifiers: [.leftCommand]), bound: nil), "a lone modifier types nothing")
+        XCTAssertFalse(VoiceIME.weType.wouldLeakKey(of: chord, bound: nil), "input methods are judged by their risks instead")
+    }
+
     func testManualHotkeyIgnoresTheFile() throws {
         let setting = IMEHotkeySetting(source: .manual, manual: Hotkey(modifiers: [.rightOption]))
         let result = HotkeyResolver.resolve(setting, ime: .bageshuo, config: try parse(["polishHotkeys": ["LeftCommand"]]))

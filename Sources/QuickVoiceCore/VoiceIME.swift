@@ -70,6 +70,12 @@ public struct VoiceIME: Identifiable, Hashable, Sendable {
         guard !isStandalone, let sourceID else { return false }
         return inputSourceIDs.contains(sourceID) || sourceID == bundleID || sourceID.hasPrefix(bundleID + ".")
     }
+
+    /// Whether tapping `hotkey` could let its ordinary key reach the focused app. A standalone app
+    /// only swallows the chord it is bound to; `bound` is that chord, from its settings file.
+    public func wouldLeakKey(of hotkey: Hotkey, bound: Hotkey?) -> Bool {
+        isStandalone && hotkey.key != nil && hotkey != bound
+    }
 }
 
 extension VoiceIME {

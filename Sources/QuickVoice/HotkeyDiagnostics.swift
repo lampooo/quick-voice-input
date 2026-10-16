@@ -42,8 +42,10 @@ final class HotkeyDiagnostics: ObservableObject {
 
     /// For a hold-to-talk engine the input method's press-once key is not tested: it would start a
     /// recording that only ends with another press, and the settings already say what it does.
-    /// A tap-to-toggle engine only reacts to its own shortcut, so the candidates are that one, the
-    /// key the app uses now, and the recommended one.
+    /// A tap-to-toggle engine only reacts to its own shortcut, so the candidates are that one and
+    /// the key the app uses now. A chord with an ordinary key is only tapped when the engine is
+    /// bound to it: otherwise nothing swallows the key, and it would land in the test field or
+    /// trigger a shortcut.
     static func buildCandidates(current resolution: HotkeyResolution, status: IMEStatus) -> [Candidate] {
         let ime = status.ime
         var list: [Candidate] = []
@@ -52,6 +54,9 @@ final class HotkeyDiagnostics: ObservableObject {
             var candidate = Candidate(title: title, hotkey: hotkey)
             if ime.trigger == .hold, let toggle = status.voice?.toggle, toggle.enabled != false, toggle.hotkey == hotkey {
                 candidate.outcome = .skipped("这是\(ime.name)「\(ime.toggleName)」的快捷键")
+            }
+            if ime.wouldLeakKey(of: hotkey, bound: status.shortcut?.hotkey), let key = hotkey.key {
+                candidate.outcome = .skipped("\(ime.name)没有用这个键，没人拦截里面的「\(KeyNames.name(for: Int(key)))」，点按可能把它打进输入框")
             }
             list.append(candidate)
         }
@@ -62,7 +67,6 @@ final class HotkeyDiagnostics: ObservableObject {
             add(own, "\(ime.name)当前的「\(ime.shortcutName)」：\(own.displayName)")
         }
         if ime.trigger == .tapToggle {
-            add(ime.defaultHotkey, "推荐：" + ime.defaultHotkey.displayName)
             return list
         }
         // Right Shift switches input methods between Chinese and English, so it is only tested when chosen.
@@ -100,6 +104,10 @@ final class HotkeyDiagnostics: ObservableObject {
         }
         guard status.isInstalled else {
             summary = "没有找到\(ime.name)。请先安装\(ime.name) Mac 版。"
+            return
+        }
+        guard !ime.isStandalone || ime.isAppRunning else {
+            summary = "\(ime.name)没有在运行。请先打开\(ime.name)并登录，再开始测试。"
             return
         }
         guard status.isEnabled || ime.isStandalone else {
@@ -193,6 +201,7 @@ final class HotkeyDiagnostics: ObservableObject {
     /// Taps `hotkey` to start, lets the engine record for a moment, then taps it to stop: the same
     /// safe sequence a long press uses. Skipped when the microphone is busy or a real key is down.
     private func testTap(_ hotkey: Hotkey, ime: VoiceIME) -> HotkeyTestOutcome {
+        guard !ime.isStandalone || ime.isAppRunning else { return .skipped("\(ime.name)没有在运行") }
         let environment = LiveTapToggleEnvironment(ime: ime, keySynth: keySynth)
         let session = TapToggleSession(environment: environment, timing: settings.tapToggleTiming)
         let start = session.start(hotkey, shouldAbort: { [weak self] in self?.isCancelled ?? true })

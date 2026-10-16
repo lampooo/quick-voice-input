@@ -87,3 +87,11 @@ final class LiveTapToggleEnvironment: TapToggleEnvironment {
         Log.info("[\(ime.id)] \(message)")
     }
 }
+
+extension VoiceIME {
+    /// A standalone app swallows the ordinary key in its own shortcut. When it is not running
+    /// nobody does, and a tap would reach the focused app, so nothing is tapped.
+    var isAppRunning: Bool {
+        !NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).isEmpty
+    }
+}

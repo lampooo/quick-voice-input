@@ -110,7 +110,17 @@ final class VoiceController: EventTapDelegate {
                     Log.info("leftover \(ime.id) recording marker found, but there is no accessibility permission to end it")
                     continue
                 }
+                if ime.isStandalone, !ime.isAppRunning {
+                    Log.info("leftover \(ime.id) recording marker found, but \(ime.id) is not running; nothing to end")
+                    UserDefaults.standard.removeObject(forKey: LiveTapToggleEnvironment.activeMarkerKey(for: ime))
+                    continue
+                }
                 let hotkey = self.settings.resolvedHotkey(for: ime).hotkey
+                if ime.wouldLeakKey(of: hotkey, bound: Self.boundShortcut(of: ime)) {
+                    Log.info("leftover \(ime.id) recording marker found, but \(hotkey.displayName) is no longer its shortcut; not tapping it")
+                    UserDefaults.standard.removeObject(forKey: LiveTapToggleEnvironment.activeMarkerKey(for: ime))
+                    continue
+                }
                 let outcome = self.tapSession(for: ime).recoverLeftoverRecording(with: hotkey)
                 Log.info("leftover \(ime.id) recording from a previous run -> \(outcome)")
                 if outcome == .stuck { self.noteStuck(ime) }
@@ -166,10 +176,24 @@ final class VoiceController: EventTapDelegate {
         notify(true)
     }
 
+    private static func boundShortcut(of ime: VoiceIME) -> Hotkey? {
+        IMEConfigCache.shared.config(for: ime)?.shortcut(for: ime.trigger)?.hotkey
+    }
+
     /// One tap to start. The mouse-up that ends the long-press gesture was already posted, so the
     /// target app is not in the middle of a click while the key goes down.
     private func beginTapToggle(generation current: Int, ime: VoiceIME, resolution: HotkeyResolution, choice: String, target: RecordingTarget?) {
         let hotkey = resolution.hotkey
+        if ime.isStandalone, !ime.isAppRunning {
+            Log.info("tap skipped: \(ime.id) is not running")
+            setNotice("\(ime.name)没有在运行，所以没有点按「\(hotkey.displayName)」。请先打开\(ime.name)再长按。")
+            return
+        }
+        if ime.wouldLeakKey(of: hotkey, bound: Self.boundShortcut(of: ime)), let key = hotkey.key {
+            Log.info("tap skipped: \(hotkey.displayName) is not \(ime.id)'s shortcut")
+            setNotice("「\(hotkey.displayName)」不是\(ime.name)现在的「\(ime.shortcutName)」快捷键，点按它会让「\(KeyNames.name(for: Int(key)))」漏到输入框里，所以没有点按。请在\(ime.name)里把快捷键设成它，或者改为跟随\(ime.name)。")
+            return
+        }
         let session = tapSession(for: ime)
         pendingLateStart = nil
         let outcome = session.start(hotkey, shouldAbort: { [weak self] in self?.shouldAbort(current) ?? true })

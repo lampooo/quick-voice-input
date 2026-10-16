@@ -62,7 +62,11 @@ public enum HotkeyResolver {
             return HotkeyResolution(ime: ime, hotkey: manual, followsIME: false)
         }
         func fallback(_ reason: String) -> HotkeyResolution {
-            HotkeyResolution(ime: ime, hotkey: manual, followsIME: false, fallbackReason: reason + "，暂时\(ime.trigger.verb)「\(manual.displayName)」")
+            // The engine's own key cannot be used here, so nothing it is bound to can be tapped.
+            let action = ime.wouldLeakKey(of: manual, bound: nil)
+                ? "在\(ime.name)里设好快捷键之前不会点按"
+                : "暂时\(ime.trigger.verb)「\(manual.displayName)」"
+            return HotkeyResolution(ime: ime, hotkey: manual, followsIME: false, fallbackReason: reason + "，" + action)
         }
         let shortcutName = "\(ime.name)的「\(ime.shortcutName)」"
         guard let config else {
