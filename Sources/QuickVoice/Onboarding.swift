@@ -614,20 +614,30 @@ private struct HotkeyStep: View {
             } else {
                 manualSection
             }
-            HotkeyRiskNotes(hotkey: resolution.hotkey, conflicts: model.statuses.conflicts(holding: resolution.hotkey, for: ime).map(\.message))
+            HotkeyRiskNotes(hotkey: resolution.hotkey, ime: ime, conflicts: model.statuses.conflicts(holding: resolution.hotkey, for: ime).map(\.message))
             if ime.trigger == .tapToggle {
-                Text("点按是一次完整的按下和松开（约 0.1 秒）。只在键盘上没有任何按键按着时才会发出，发出后会确认修饰键已经松开；结束的那一次点按会先确认麦克风真的在录音，再发出，并且和开始那一次至少隔 0.8 秒。")
+                Text(tapCaption)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
             if let title = guideTitle(resolution) {
                 imeGuide(title: title)
+            } else if !ime.recommendationNotes.isEmpty, resolution.hotkey == ime.defaultHotkey {
+                StatusRow(ok: true, text: "「\(ime.defaultHotkey.displayName)」就是推荐给\(ime.name)的键。")
             }
 
             Divider()
             HotkeyTestSection(diagnostics: diagnostics, testField: model.testField, ime: ime)
         }
+    }
+
+    private var tapCaption: String {
+        var text = "点按是一次完整的按下和松开（约 0.1 秒）。只在键盘上没有任何按键按着时才会发出，发出后会确认修饰键已经松开；结束的那一次点按会先确认麦克风真的在录音，再发出，并且和开始那一次至少隔 0.8 秒。"
+        if ime.isStandalone {
+            text += "组合键里的字母由\(ime.name)自己拦下，不会打进输入框；\(ime.name)没有在运行，或者这里的键和它设置里的不一致时，不会点按。"
+        }
+        return text
     }
 
     @ViewBuilder
@@ -661,7 +671,7 @@ private struct HotkeyStep: View {
                 Text(preset.note).font(.caption).foregroundStyle(.secondary)
             }
             HotkeyRecorderButton(model: model.recorder)
-            Text("录制时直接按下想用的组合，例如先按住左 Option 再按空格。如果按的正好是\(ime.name)当前的语音快捷键，它可能会被\(ime.name)拦截，这时直接选「跟随\(ime.name)」就行。")
+            Text("录制时直接按下想用的组合，例如\(ime.trigger == .hold ? "先按住左 Option 再按空格" : "依次按住左 Control、左 Option、左 Shift，再按 V")。如果按的正好是\(ime.name)当前的语音快捷键，它可能会被\(ime.name)拦截，这时直接选「跟随\(ime.name)」就行。")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -691,7 +701,8 @@ private struct HotkeyStep: View {
         if setting.source == .followIME, !resolution.followsIME {
             return "需要在\(ime.name)里换一个键"
         }
-        if !resolution.hotkey.risks.isEmpty {
+        let notRecommended = !ime.recommendationNotes.isEmpty && resolution.hotkey != ime.defaultHotkey
+        if !ime.risks(of: resolution.hotkey).isEmpty || notRecommended {
             return "更稳妥的做法（可选）：把\(ime.name)的「\(ime.shortcutName)」改成\(ime.defaultHotkey.displayName)"
         }
         return nil
@@ -703,6 +714,15 @@ private struct HotkeyStep: View {
                 Text(title).font(.headline)
                 ForEach(Array(ime.setupSteps.enumerated()), id: \.offset) { index, text in
                     Numbered(index: index + 1, text: text)
+                }
+                if !ime.recommendationNotes.isEmpty {
+                    Text("为什么推荐「\(ime.defaultHotkey.displayName)」").font(.subheadline.weight(.semibold)).padding(.top, 4)
+                    ForEach(ime.recommendationNotes, id: \.self) { note in
+                        Text("• " + note)
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
                 HStack {
                     Button(ime.isStandalone ? "打开\(ime.name)" : "打开\(ime.name)设置") { status.openSettingsApp() }

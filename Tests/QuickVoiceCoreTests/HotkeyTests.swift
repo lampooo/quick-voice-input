@@ -91,8 +91,13 @@ final class HotkeyTests: XCTestCase {
     }
 
     func testTapToggleEnginesGetTheirOwnPresets() {
-        XCTAssertEqual(HotkeyPreset.matching(VoiceIME.bageshuo.defaultHotkey), .leftCommand)
-        XCTAssertEqual(HotkeyPreset.leftCommand.title(for: .bageshuo), "左 Command（推荐）")
+        XCTAssertEqual(HotkeyPreset.matching(VoiceIME.bageshuo.defaultHotkey), .controlOptionShiftV)
+        XCTAssertEqual(HotkeyPreset.controlOptionShiftV.title(for: .bageshuo), "左侧 ⌃⌥⇧ + V（推荐）")
+        XCTAssertEqual(HotkeyPreset.leftCommand.title(for: .bageshuo), "左 Command")
+        XCTAssertEqual(HotkeyPreset.tapToggle.first, .controlOptionShiftV)
+        for taken in [HotkeyPreset.rightOption, .rightCommand] {
+            XCTAssertFalse(HotkeyPreset.tapToggle.contains(taken), "\(taken.id) is the WeType or Doubao voice key")
+        }
         XCTAssertEqual(HotkeyPreset.presets(for: .weType), HotkeyPreset.all)
         XCTAssertEqual(HotkeyPreset.presets(for: .bageshuo), HotkeyPreset.tapToggle)
         XCTAssertEqual(Set(HotkeyPreset.tapToggle.map(\.id)).count, HotkeyPreset.tapToggle.count)

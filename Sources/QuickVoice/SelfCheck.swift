@@ -29,7 +29,7 @@ enum SelfCheck {
             let setting = settings.hotkeySetting(for: ime)
             let resolution = status.resolution(for: settings)
             let source = setting.source == .followIME ? "跟随\(ime.name)" : "手动指定（\(setting.manual.displayName)）"
-            lines.append("  \(ime.name)：快捷键来源 \(source)，长按时按住 \(resolution.hotkey.displayName)" + (resolution.fallbackReason.map { "（\($0)）" } ?? ""))
+            lines.append("  \(ime.name)：快捷键来源 \(source)，长按时\(ime.trigger.verb) \(resolution.hotkey.displayName)" + (resolution.fallbackReason.map { "（\($0)）" } ?? ""))
             switch status.shortcutMatches(resolution.hotkey) {
             case .some(true): lines.append("    与\(ime.name)的「\(ime.shortcutName)」一致")
             case .some(false): lines.append("    ⚠️ 与\(ime.name)的「\(ime.shortcutName)」不一致")
@@ -41,7 +41,16 @@ enum SelfCheck {
                     lines.append("    ⚠️ 上次运行留下了「录音可能还在进行」的标记；本应用下次启动（有辅助功能权限时）会确认麦克风并结束它")
                 }
             }
-            for risk in resolution.hotkey.risks {
+            if !ime.recommendationNotes.isEmpty {
+                lines.append("    推荐的键：\(ime.defaultHotkey.displayName)" + (resolution.hotkey == ime.defaultHotkey ? "（正在用）" : ""))
+            }
+            if ime.isStandalone {
+                lines.append("    \(ime.name)" + (ime.isAppRunning ? "正在运行" : "没有在运行，长按时不会点按"))
+                if ime.wouldLeakKey(of: resolution.hotkey, bound: status.shortcut?.hotkey) {
+                    lines.append("    ⚠️ 「\(resolution.hotkey.displayName)」不是\(ime.name)设置里的快捷键，长按时不会点按（否则里面的普通键会漏到输入框）")
+                }
+            }
+            for risk in ime.risks(of: resolution.hotkey) {
                 lines.append("    ⚠️ " + risk.message)
             }
             for conflict in statuses.conflicts(holding: resolution.hotkey, for: ime) {

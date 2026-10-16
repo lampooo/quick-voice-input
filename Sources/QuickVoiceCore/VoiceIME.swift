@@ -51,6 +51,8 @@ public struct VoiceIME: Identifiable, Hashable, Sendable {
     public let defaultHotkey: Hotkey
     /// How to set the input method's own shortcut to `defaultHotkey`.
     public let setupSteps: [String]
+    /// Why `defaultHotkey` is the recommended key, when that is not obvious. Shown in the wizard.
+    public var recommendationNotes: [String] = []
     public let downloadURL: String
     /// A warning about the installed version, if any.
     public let versionAdvice: @Sendable (String) -> String?
@@ -69,6 +71,18 @@ public struct VoiceIME: Identifiable, Hashable, Sendable {
     public func owns(sourceID: String?) -> Bool {
         guard !isStandalone, let sourceID else { return false }
         return inputSourceIDs.contains(sourceID) || sourceID == bundleID || sourceID.hasPrefix(bundleID + ".")
+    }
+
+    /// Side effects of using `hotkey` for this engine. A standalone app listens below every other
+    /// app and swallows the key it is bound to, so a letter in its chord never reaches the text
+    /// field; only a combination macOS itself uses still matters. An input method may let it through.
+    public func risks(of hotkey: Hotkey) -> [HotkeyRisk] {
+        let all = hotkey.risks
+        guard isStandalone else { return all }
+        return all.filter {
+            if case .systemShortcut = $0 { return true }
+            return false
+        }
     }
 
     /// Whether tapping `hotkey` could let its ordinary key reach the focused app. A standalone app
@@ -153,11 +167,17 @@ extension VoiceIME {
         helperBundleIDs: [],
         pushToTalkName: "语音输入",
         toggleName: "语音输入",
-        defaultHotkey: Hotkey(modifiers: [.leftCommand]),
+        defaultHotkey: Hotkey(modifiers: [.leftControl, .leftOption, .leftShift], key: KeyCode.v),
         setupSteps: [
             "点「打开网易叭哥说」，进入「设置 → 快捷键」。",
-            "把「语音输入」的快捷键改成一个程序能模拟的单个修饰键，例如左 Command（⌘）或左 Option（⌥）；Fn 无法被程序模拟。",
+            "点「语音输入」的快捷键框，用键盘左侧的 Control（⌃）、Option（⌥）、Shift（⇧）三个键加上 V 键录入，然后松开。叭哥说区分左右，要用左侧的修饰键。如果录不进三个修饰键的组合，改用 ⌃⌥ + V。",
             "回到这里点「重新读取」。选的是「跟随网易叭哥说」的话，这里会自动跟着变。",
+        ],
+        recommendationNotes: [
+            "叭哥说是点按开关：组合键点按一次就是一次完整的按键，程序合成比单独点按一个修饰键可靠。",
+            "右 Option、右 Command 是微信输入法、豆包输入法推荐的语音键。三个软件各自监听，用同一个键会同时响应；这个组合和它们不重叠。",
+            "不用左 Command：它和 ⌘ + 点击、各种 ⌘ 组合键冲突。也不用 ⌃ + 空格、⌃⌥ + 空格：它们是 macOS 切换输入法的快捷键。",
+            "⌃⌥⇧ + V 不是 macOS 自带的快捷键，常见软件也很少用；其中的 V 由叭哥说自己拦下，不会打进输入框。",
         ],
         downloadURL: "",
         versionAdvice: { _ in nil }

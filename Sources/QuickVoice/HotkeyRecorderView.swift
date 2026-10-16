@@ -85,9 +85,10 @@ struct HotkeyRecorderButton: View {
 /// input methods' own settings.
 struct HotkeyRiskNotes: View {
     let hotkey: Hotkey
+    let ime: VoiceIME
     var conflicts: [String] = []
 
-    private var messages: [String] { hotkey.risks.map(\.message) + conflicts }
+    private var messages: [String] { ime.risks(of: hotkey).map(\.message) + conflicts }
 
     var body: some View {
         if !messages.isEmpty {

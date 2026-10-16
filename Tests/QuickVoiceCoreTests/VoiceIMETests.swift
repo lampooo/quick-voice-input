@@ -10,13 +10,17 @@ final class VoiceIMETests: XCTestCase {
         XCTAssertEqual(Set(VoiceIME.all.flatMap(\.bundleIDs)).count, VoiceIME.all.flatMap(\.bundleIDs).count)
         for ime in VoiceIME.all {
             XCTAssertTrue(ime.defaultHotkey.isValid, ime.id)
-            XCTAssertTrue(ime.defaultHotkey.risks.isEmpty, ime.id)
+            XCTAssertTrue(ime.risks(of: ime.defaultHotkey).isEmpty, ime.id)
             XCTAssertEqual(ime.inputSourceIDs.isEmpty, ime.isStandalone, "only a standalone app has no input source: \(ime.id)")
             XCTAssertEqual(VoiceIME.withID(ime.id), ime)
         }
         XCTAssertEqual(VoiceIME.doubao.defaultHotkey, Hotkey(modifiers: [.rightCommand]))
         XCTAssertEqual(VoiceIME.weType.defaultHotkey, Hotkey(modifiers: [.rightOption]))
-        XCTAssertEqual(VoiceIME.bageshuo.defaultHotkey, Hotkey(modifiers: [.leftCommand]))
+        XCTAssertEqual(VoiceIME.bageshuo.defaultHotkey, Hotkey(modifiers: [.leftControl, .leftOption, .leftShift], key: KeyCode.v))
+        XCTAssertFalse(VoiceIME.bageshuo.recommendationNotes.isEmpty)
+        XCTAssertTrue(VoiceIME.weType.recommendationNotes.isEmpty)
+        XCTAssertTrue(VoiceIME.doubao.recommendationNotes.isEmpty)
+        XCTAssertTrue(VoiceIME.bageshuo.setupSteps.contains { $0.contains("⌃⌥ + V") }, "the fallback chord is named in the steps")
         XCTAssertEqual(VoiceIME.inputMethods, [.weType, .doubao])
     }
 

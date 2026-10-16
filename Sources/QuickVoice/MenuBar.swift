@@ -156,8 +156,11 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         } else if status.shortcutMatches(resolution.hotkey) == false {
             result.append("与这里选的「\(resolution.hotkey.displayName)」不一致")
         }
-        if !resolution.hotkey.risks.isEmpty {
+        if !status.ime.risks(of: resolution.hotkey).isEmpty {
             result.append("快捷键含普通键，可能打出字符，建议改用\(status.ime.defaultHotkey.displayName)")
+        }
+        if status.ime.isStandalone, status.isInstalled, !status.ime.isAppRunning {
+            result.append("\(status.ime.name)没有在运行，长按时不会点按")
         }
         result += statuses.conflicts(holding: resolution.hotkey, for: status.ime).map(\.summary)
         return result

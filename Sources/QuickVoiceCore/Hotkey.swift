@@ -25,6 +25,7 @@ public enum EventFlagBits {
 }
 
 public enum KeyCode {
+    public static let v: UInt16 = 9
     public static let space: UInt16 = 49
     public static let capsLock: UInt16 = 57
     public static let function: UInt16 = 63
@@ -262,12 +263,28 @@ public struct HotkeyPreset: Identifiable, Hashable, Sendable {
         note: "程序可以模拟；平时单独点按它不会触发任何功能。"
     )
 
+    public static let controlOptionShiftV = HotkeyPreset(
+        id: "controlOptionShiftV",
+        hotkey: Hotkey(modifiers: [.leftControl, .leftOption, .leftShift], key: KeyCode.v),
+        name: "左侧 ⌃⌥⇧ + V",
+        note: "程序可以模拟，是一次完整的组合键点按。和右 Option、右 Command 不重叠，也不是 macOS 或常见软件的快捷键，不会和 ⌘ 组合键冲突。"
+    )
+    public static let controlOptionV = HotkeyPreset(
+        id: "controlOptionV",
+        hotkey: Hotkey(modifiers: [.leftControl, .leftOption], key: KeyCode.v),
+        name: "左侧 ⌃⌥ + V",
+        note: "少一个修饰键、更好按；如果网易叭哥说录不进三个修饰键的组合，就用这个。"
+    )
+
     /// Keys for engines you hold (WeType, Doubao): the right-hand modifiers stay out of the way of
     /// everyday shortcuts.
     public static let all: [HotkeyPreset] = [rightOption, rightCommand, rightControl, rightShift, optionSpace]
 
-    /// Keys that make sense when the engine's shortcut is tapped once to start and once to stop.
-    public static let tapToggle: [HotkeyPreset] = [leftCommand, rightCommand, leftOption, rightOption, rightControl, optionSpace]
+    /// Keys for an app that is tapped once to start and once to stop. The right Option and right
+    /// Command keys are left out: WeType and Doubao hold them for their own hold-to-talk, and all
+    /// three listen at once. A chord is one clean tap; a lone left Command also fires on ⌘+click
+    /// and competes with ⌘ combos and candidate selection.
+    public static let tapToggle: [HotkeyPreset] = [controlOptionShiftV, controlOptionV, leftCommand, leftOption]
 
     public static func presets(for ime: VoiceIME) -> [HotkeyPreset] {
         ime.trigger == .hold ? all : tapToggle
