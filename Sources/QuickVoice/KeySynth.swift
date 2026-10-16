@@ -36,8 +36,9 @@ final class KeySynth {
         return held
     }
 
-    /// Presses and keeps holding the hotkey. Releases any previously held hotkey first.
-    func press(_ hotkey: Hotkey) {
+    /// Presses and keeps holding the hotkey. Releases any previously held hotkey first. With
+    /// `repeats`, an ordinary key in the hotkey auto-repeats like a physically held key.
+    func press(_ hotkey: Hotkey, repeats: Bool = true) {
         lock.lock()
         defer { lock.unlock() }
         stopRepeating()
@@ -46,7 +47,7 @@ final class KeySynth {
         }
         post(hotkey.pressSequence)
         held = hotkey
-        if let key = hotkey.key {
+        if repeats, let key = hotkey.key {
             startRepeating(key: key, flags: hotkey.pressSequence.last?.flags ?? 0)
         }
     }
@@ -61,8 +62,10 @@ final class KeySynth {
         held = nil
     }
 
+    /// A tap never auto-repeats: a held tap longer than the repeat delay would otherwise send the
+    /// key twice, and a toggle shortcut would start and stop at once.
     func tap(_ hotkey: Hotkey, holdFor seconds: TimeInterval = 0.08) {
-        press(hotkey)
+        press(hotkey, repeats: false)
         usleep(useconds_t(seconds * 1_000_000))
         release()
     }
