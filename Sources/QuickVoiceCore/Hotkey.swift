@@ -249,9 +249,31 @@ public struct HotkeyPreset: Identifiable, Hashable, Sendable {
         note: "程序可以模拟；一些启动器（如 Raycast、ChatGPT）也常用这个组合。"
     )
 
+    public static let leftCommand = HotkeyPreset(
+        id: "leftCommand",
+        hotkey: Hotkey(modifiers: [.leftCommand]),
+        name: "左 Command",
+        note: "程序可以模拟；点按一次只持续约 0.1 秒。但它也是 ⌘C、⌘V 等快捷键的一部分，所以只在键盘上没有任何按键按着时才会点按，并且点按后会确认 Command 已经松开。"
+    )
+    public static let leftOption = HotkeyPreset(
+        id: "leftOption",
+        hotkey: Hotkey(modifiers: [.leftOption]),
+        name: "左 Option",
+        note: "程序可以模拟；平时单独点按它不会触发任何功能。"
+    )
+
+    /// Keys for engines you hold (WeType, Doubao): the right-hand modifiers stay out of the way of
+    /// everyday shortcuts.
     public static let all: [HotkeyPreset] = [rightOption, rightCommand, rightControl, rightShift, optionSpace]
 
+    /// Keys that make sense when the engine's shortcut is tapped once to start and once to stop.
+    public static let tapToggle: [HotkeyPreset] = [leftCommand, rightCommand, leftOption, rightOption, rightControl, optionSpace]
+
+    public static func presets(for ime: VoiceIME) -> [HotkeyPreset] {
+        ime.trigger == .hold ? all : tapToggle
+    }
+
     public static func matching(_ hotkey: Hotkey) -> HotkeyPreset? {
-        all.first { $0.hotkey == hotkey }
+        (all + tapToggle).first { $0.hotkey == hotkey }
     }
 }

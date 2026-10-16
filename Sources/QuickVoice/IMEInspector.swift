@@ -25,6 +25,20 @@ final class IMEConfigCache {
     }
 
     func load(_ ime: VoiceIME) -> Result<IMEVoiceConfig, Error> {
+        var result = loadOnce(ime)
+        // A JSON store is rewritten in one go; a read that lands in the middle of it is cut off.
+        // Reading again a moment later gets the finished file.
+        if case .failure = result, ime.settingsFormat == .bageshuoJSON {
+            for _ in 0..<2 {
+                guard case let .failure(error) = result, (error as? CocoaError)?.code != .fileReadNoSuchFile else { break }
+                usleep(40_000)
+                result = loadOnce(ime)
+            }
+        }
+        return result
+    }
+
+    private func loadOnce(_ ime: VoiceIME) -> Result<IMEVoiceConfig, Error> {
         // A plain read, not a memory map: the input method may resize the file while we look at it.
         let data: Data
         do {
@@ -55,22 +69,28 @@ struct IMEStatus: Equatable, Identifiable {
     var isInstalled: Bool { appURL != nil }
     var isUsable: Bool { isInstalled && isEnabled }
 
+    /// The app that has the voice shortcut settings: the input method's settings app, or the
+    /// standalone app itself.
     var settingsAppURL: URL? {
-        appURL?.appendingPathComponent(ime.settingsAppPath)
+        guard let appURL else { return nil }
+        return ime.settingsAppPath.map { appURL.appendingPathComponent($0) } ?? appURL
     }
 
-    /// Short description of the 「按住说话」 shortcut for menus and the setup guide.
-    var pushToTalkDescription: String {
+    /// The shortcut this app drives for the engine: its hold-to-talk or its single tap-to-toggle one.
+    var shortcut: VoiceShortcut? { voice?.shortcut(for: ime.trigger) }
+
+    /// Short description of the shortcut this app drives, for menus and the setup guide.
+    var shortcutDescription: String {
         guard isInstalled else { return "未安装" }
-        guard let shortcut = voice?.pushToTalk else {
+        guard let shortcut else {
             return settingsError == nil ? "未读取到（可能仍是默认的 Fn）" : "无法读取设置"
         }
         if shortcut.enabled == false { return "\(shortcut.displayName)（已关闭）" }
         return shortcut.displayName
     }
 
-    func pushToTalkMatches(_ hotkey: Hotkey) -> Bool? {
-        guard let shortcut = voice?.pushToTalk, shortcut.tapCount <= 1 else { return nil }
+    func shortcutMatches(_ hotkey: Hotkey) -> Bool? {
+        guard let shortcut, shortcut.tapCount <= 1, shortcut.unsynthesizableName == nil else { return nil }
         return hotkey.matches(keyCodes: shortcut.keyCodes)
     }
 
@@ -96,17 +116,27 @@ struct IMEStatus: Equatable, Identifiable {
             let build = info["CFBundleVersion"] as? String
             status.version = [short, build.map { "(\($0))" }].compactMap { $0 }.joined()
         }
-        status.isEnabled = InputSource.isEnabled(ime)
+        // A standalone app has no input source to add or switch to: installed is all it takes.
+        status.isEnabled = ime.isStandalone ? status.isInstalled : InputSource.isEnabled(ime)
         status.isCurrent = InputSource.isCurrent(ime)
         switch IMEConfigCache.shared.load(ime) {
         case let .success(config):
             status.voice = config
         case let .failure(error):
             if status.isInstalled {
-                status.settingsError = (error as? CocoaError)?.code == .fileReadNoSuchFile ? "找不到设置文件" : "\(error)"
+                status.settingsError = Self.describe(error)
             }
         }
         return status
+    }
+
+    private static func describe(_ error: Error) -> String {
+        if (error as? CocoaError)?.code == .fileReadNoSuchFile { return "找不到设置文件" }
+        switch error as? BageshuoSettings.ReadError {
+        case .notJSONObject: return "设置文件格式不对"
+        case .noSettings: return "设置文件里没有快捷键设置"
+        case nil: return "\(error)"
+        }
     }
 
     static func inspectAll() -> [IMEStatus] {
@@ -137,7 +167,7 @@ extension Array where Element == IMEStatus {
         return result
     }
 
-    /// Why holding `hotkey` for `ime` may not start hold-to-talk.
+    /// Why using `hotkey` for `ime` may not start its voice input.
     func conflicts(holding hotkey: Hotkey, for ime: VoiceIME) -> [IMEConflict] {
         IMEConflicts.find(hotkey: hotkey, ime: ime, configs: configs)
     }
@@ -164,7 +194,7 @@ enum VoiceTarget {
         let snapshot = settings.snapshot
         let environment = VoiceIMESelector.Environment(
             currentSourceID: InputSource.currentSourceID(),
-            enabledIDs: Set(VoiceIME.all.filter(InputSource.isEnabled).map(\.id)),
+            enabledIDs: Set(VoiceIME.all.filter { $0.isStandalone ? IMEStatus.appURL(of: $0) != nil : InputSource.isEnabled($0) }.map(\.id)),
             installedIDs: Set(VoiceIME.all.filter { IMEStatus.appURL(of: $0) != nil }.map(\.id)),
             lastUsedID: snapshot.lastVoiceIMEID
         )

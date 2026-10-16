@@ -30,6 +30,7 @@ final class AppSettings: ObservableObject {
         static let autoSwitchInputSource = "autoSwitchInputSource"
         static let appRules = "appRules"
         static let hasCompletedOnboarding = "hasCompletedOnboarding"
+        static let tapHoldMs = "tapHoldMs"
         /// Written before the input method could be chosen; they describe WeType's hotkey.
         static let legacyHotkeySource = "hotkeySource"
         static let legacyHotkey = "hotkey"
@@ -93,6 +94,13 @@ final class AppSettings: ObservableObject {
 
     func hotkeySetting(for ime: VoiceIME) -> IMEHotkeySetting {
         snapshot.hotkeySetting(for: ime)
+    }
+
+    /// Timing of a tap to start and a tap to stop. Only `tapHoldMs` can be changed, without a UI:
+    /// `defaults write com.quickvoiceinput.app tapHoldMs -int 150`.
+    var tapToggleTiming: TapToggleTiming {
+        let milliseconds = defaults.object(forKey: Key.tapHoldMs) as? Int
+        return milliseconds.map { TapToggleTiming(tapHold: Double($0) / 1000) } ?? .standard
     }
 
     /// The hotkey to hold right now for `ime`; reads the input method's settings file. Safe on any thread.

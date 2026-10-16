@@ -30,10 +30,16 @@ enum SelfCheck {
             let resolution = status.resolution(for: settings)
             let source = setting.source == .followIME ? "跟随\(ime.name)" : "手动指定（\(setting.manual.displayName)）"
             lines.append("  \(ime.name)：快捷键来源 \(source)，长按时按住 \(resolution.hotkey.displayName)" + (resolution.fallbackReason.map { "（\($0)）" } ?? ""))
-            switch status.pushToTalkMatches(resolution.hotkey) {
-            case .some(true): lines.append("    与\(ime.name)的「\(ime.pushToTalkName)」一致")
-            case .some(false): lines.append("    ⚠️ 与\(ime.name)的「\(ime.pushToTalkName)」不一致")
+            switch status.shortcutMatches(resolution.hotkey) {
+            case .some(true): lines.append("    与\(ime.name)的「\(ime.shortcutName)」一致")
+            case .some(false): lines.append("    ⚠️ 与\(ime.name)的「\(ime.shortcutName)」不一致")
             case .none: lines.append("    无法判断是否与\(ime.name)一致")
+            }
+            if ime.trigger == .tapToggle {
+                lines.append("    触发方式：点按一次开始、松开鼠标再点按一次结束；点按约 \(Int(settings.tapToggleTiming.tapHold * 1000)) 毫秒，两次点按至少隔 \(settings.tapToggleTiming.minInterval) 秒，前后用麦克风状态确认")
+                if LiveTapToggleEnvironment.hasActiveMarker(for: ime) {
+                    lines.append("    ⚠️ 上次运行留下了「录音可能还在进行」的标记；本应用下次启动（有辅助功能权限时）会确认麦克风并结束它")
+                }
             }
             for risk in resolution.hotkey.risks {
                 lines.append("    ⚠️ " + risk.message)
@@ -62,17 +68,26 @@ enum SelfCheck {
         let ime = status.ime
         guard let url = status.appURL else { return ["\(ime.name)：未安装"] }
         var lines = ["\(ime.name)：\(status.version ?? "?")，位置 \(url.path)"]
-        lines.append("  已添加到输入法列表：\(status.isEnabled ? "是" : "否")；是当前输入法：\(status.isCurrent ? "是" : "否")")
+        if ime.isStandalone {
+            lines.append("  独立 App：没有输入源，不需要添加到输入法列表，也不会切换输入法；在任何输入法下都响应")
+        } else {
+            lines.append("  已添加到输入法列表：\(status.isEnabled ? "是" : "否")；是当前输入法：\(status.isCurrent ? "是" : "否")")
+        }
         if let voice = status.voice {
-            if let ptt = voice.pushToTalk {
-                let state = ptt.enabled == false ? "（已关闭）" : ""
-                let synth = ptt.hotkey == nil ? "程序无法模拟" : "程序可以模拟"
-                lines.append("  \(ime.pushToTalkName)：\(ptt.displayName)\(state)，键码 \(ptt.keyCodes)，\(synth)")
-            } else {
-                lines.append("  \(ime.pushToTalkName)：设置文件里没有记录（可能是默认的 Fn）")
+            if ime.trigger == .hold {
+                if let ptt = voice.pushToTalk {
+                    let state = ptt.enabled == false ? "（已关闭）" : ""
+                    let synth = ptt.hotkey == nil ? "程序无法模拟" : "程序可以模拟"
+                    lines.append("  \(ime.pushToTalkName)：\(ptt.displayName)\(state)，键码 \(ptt.keyCodes)，\(synth)")
+                } else {
+                    lines.append("  \(ime.pushToTalkName)：设置文件里没有记录（可能是默认的 Fn）")
+                }
             }
             if let toggle = voice.toggle {
-                lines.append("  \(ime.toggleName)：\(toggle.displayName)\(toggle.enabled == false ? "（已关闭）" : "")，键码 \(toggle.keyCodes)")
+                let synth = ime.trigger == .tapToggle ? (toggle.hotkey == nil ? "，程序无法模拟" : "，程序可以模拟") : ""
+                lines.append("  \(ime.toggleName)：\(toggle.displayName)\(toggle.enabled == false ? "（已关闭）" : "")，键码 \(toggle.keyCodes)\(synth)")
+            } else if ime.trigger == .tapToggle {
+                lines.append("  \(ime.toggleName)：设置文件里没有记录（可能是默认的 Fn）")
             }
             if voice.commandSelectsCandidates == true {
                 lines.append("  已开启「用左右 Command 选候选词」")
@@ -99,7 +114,9 @@ enum SelfCheck {
             return ime.bundleIDs.contains(bundleID)
         }
         guard let tap = imeTaps.first else {
-            return "没有发现事件监听（它在自己是当前输入法时，通过系统输入法接口接收按键）"
+            return ime.isStandalone
+                ? "没有发现事件监听（它可能没有在运行，或没有授予它辅助功能/输入监控权限）"
+                : "没有发现事件监听（它在自己是当前输入法时，通过系统输入法接口接收按键）"
         }
         let point = tap.tapPoint == .cghidEventTap ? " HID 层" : "会话层"
         let mode = tap.options == .listenOnly ? "只监听" : "可拦截"

@@ -34,6 +34,9 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         if !Permissions.isAccessibilityTrusted {
             symbol = "exclamationmark.triangle"
             tooltip = "快捷语音输入：需要辅助功能权限"
+        } else if let stuck = app.stuckIME {
+            symbol = "exclamationmark.triangle"
+            tooltip = "快捷语音输入：\(stuck.name)的录音没能自动结束，请手动结束它"
         } else if isRecording {
             symbol = "mic.fill"
             tooltip = "快捷语音输入：正在听写，松开鼠标结束"
@@ -91,14 +94,20 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         menu.addItem(voiceIMEMenu(selection: selection, statuses: statuses))
         let installed = statuses.filter(\.isInstalled)
         for status in installed {
-            let current = status.isCurrent ? "（当前输入法）" : ""
-            menu.addItem(info("\(status.ime.name) \(status.version ?? "")：\(status.ime.pushToTalkName) = \(status.pushToTalkDescription)\(current)"))
+            let current = status.isCurrent ? "（当前输入法）" : (status.ime.isStandalone ? "（独立 App，点按开始/结束）" : "")
+            menu.addItem(info("\(status.ime.name) \(status.version ?? "")：\(status.ime.shortcutName) = \(status.shortcutDescription)\(current)"))
             for warning in warnings(for: status, statuses: statuses) {
                 menu.addItem(info("    ⚠️ " + warning))
             }
         }
         if installed.isEmpty {
             menu.addItem(info("未检测到" + VoiceIME.all.map(\.name).joined(separator: "或")))
+        }
+        if let stuck = app.stuckIME {
+            menu.addItem(info("⚠️ \(stuck.name)的录音没能自动结束，请在\(stuck.name)里手动结束它"))
+        }
+        if let notice = app.voiceNotice {
+            menu.addItem(info("⚠️ " + notice))
         }
         if let lastCommit {
             menu.addItem(info("最近一次（\(lastCommit.ime.name)）：\(lastCommit.outcome.summary)"))
@@ -108,7 +117,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         menu.addItem(holdDurationMenu())
         menu.addItem(hotkeyMenu(statuses: statuses, selection: selection))
         let autoSwitch = item("触发前自动切换输入法", #selector(toggleAutoSwitch))
-        autoSwitch.toolTip = "当前输入法不是要用的语音输入法时，开始前先切过去"
+        autoSwitch.toolTip = "当前输入法不是要用的语音输入法时，开始前先切过去（网易叭哥说是独立 App，不需要切换）"
         autoSwitch.state = settings.autoSwitchInputSource ? .on : .off
         menu.addItem(autoSwitch)
         menu.addItem(appRuleMenu())
@@ -144,7 +153,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         var result: [String] = []
         if let reason = resolution.fallbackReason {
             result.append(reason)
-        } else if status.pushToTalkMatches(resolution.hotkey) == false {
+        } else if status.shortcutMatches(resolution.hotkey) == false {
             result.append("与这里选的「\(resolution.hotkey.displayName)」不一致")
         }
         if !resolution.hotkey.risks.isEmpty {
@@ -213,7 +222,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         menu.addItem(follow)
         menu.addItem(.separator())
         menu.addItem(info("手动指定"))
-        for preset in HotkeyPreset.all {
+        for preset in HotkeyPreset.presets(for: ime) {
             let entry = item(preset.title(for: ime), #selector(chooseHotkey(_:)))
             entry.representedObject = [ime.id, preset.id]
             entry.toolTip = preset.note
@@ -318,7 +327,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     @objc private func chooseHotkey(_ sender: NSMenuItem) {
         guard let pair = sender.representedObject as? [String], pair.count == 2,
               let ime = VoiceIME.withID(pair[0]),
-              let preset = HotkeyPreset.all.first(where: { $0.id == pair[1] }) else { return }
+              let preset = HotkeyPreset.presets(for: ime).first(where: { $0.id == pair[1] }) else { return }
         settings.useManualHotkey(preset.hotkey, for: ime)
     }
 

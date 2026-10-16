@@ -20,6 +20,11 @@ enum Log {
         queue.async { append(line) }
     }
 
+    /// Waits until everything logged so far is on disk; used before the app exits.
+    static func flush() {
+        queue.sync {}
+    }
+
     private static func append(_ line: String) {
         let manager = FileManager.default
         try? manager.createDirectory(at: directory, withIntermediateDirectories: true)

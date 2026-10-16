@@ -8,25 +8,30 @@ public struct VoiceShortcut: Equatable, Sendable {
     public var tapCount: Int
     /// The input method's on/off switch for this shortcut; nil when it has none.
     public var enabled: Bool?
+    /// How the app writes the shortcut when key codes cannot express it (mouse buttons, keys this
+    /// app has no code for). Such a shortcut cannot be synthesized.
+    public var unsynthesizableName: String?
 
-    public init(keyCodes: [Int], modifierFlags: Int64? = nil, tapCount: Int = 1, enabled: Bool? = nil) {
+    public init(keyCodes: [Int], modifierFlags: Int64? = nil, tapCount: Int = 1, enabled: Bool? = nil, unsynthesizableName: String? = nil) {
         self.keyCodes = keyCodes
         self.modifierFlags = modifierFlags
         self.tapCount = tapCount
         self.enabled = enabled
+        self.unsynthesizableName = unsynthesizableName
     }
 
-    public var isCleared: Bool { keyCodes.isEmpty }
+    public var isCleared: Bool { keyCodes.isEmpty && unsynthesizableName == nil }
 
     public var usesFn: Bool { keyCodes.contains(Int(KeyCode.function)) }
 
     /// The equivalent hotkey this app can synthesize, or nil (Fn, multi-tap, unusual keys).
     public var hotkey: Hotkey? {
-        guard tapCount <= 1 else { return nil }
+        guard tapCount <= 1, unsynthesizableName == nil else { return nil }
         return Hotkey(physicalKeyCodes: keyCodes)
     }
 
     public var displayName: String {
+        if let unsynthesizableName { return unsynthesizableName }
         guard !keyCodes.isEmpty else { return "未设置" }
         let keys = keyCodes.map { KeyNames.name(for: $0) }.joined(separator: " + ")
         return tapCount > 1 ? "连按 \(tapCount) 次 \(keys)" : keys
@@ -39,6 +44,8 @@ public enum IMESettingsFormat: Sendable {
     case weTypeMMKV
     /// MMKV holding one NSKeyedArchiver dictionary with `asr*Shortcut*` keys (Doubao).
     case doubaoMMKV
+    /// A plain JSON store with `settings.*Hotkey` names such as `LeftCommand` (NetEase Bageshuo).
+    case bageshuoJSON
 }
 
 /// What an input method's settings say about voice input.
@@ -67,11 +74,16 @@ public struct IMEVoiceConfig: Equatable, Sendable {
         self.worksInOtherInputMethods = worksInOtherInputMethods
     }
 
+    /// The shortcut a trigger mode listens to: 「按住说话」 for hold, the single shortcut for tap to toggle.
+    public func shortcut(for trigger: VoiceTrigger) -> VoiceShortcut? {
+        trigger == .hold ? pushToTalk : toggle
+    }
+
     public static func parse(_ data: Data, format: IMESettingsFormat) throws -> IMEVoiceConfig {
-        let values = try MMKVReader.parse(data)
         switch format {
-        case .weTypeMMKV: return WeTypeSettings.parse(values)
-        case .doubaoMMKV: return try DoubaoSettings.parse(values)
+        case .weTypeMMKV: return WeTypeSettings.parse(try MMKVReader.parse(data))
+        case .doubaoMMKV: return try DoubaoSettings.parse(try MMKVReader.parse(data))
+        case .bageshuoJSON: return try BageshuoSettings.parse(data)
         }
     }
 }

@@ -1,19 +1,42 @@
 import Foundation
 
-/// An input method that does the speech recognition. Everything the app knows about one input
-/// method lives in its descriptor: supporting another one means adding a descriptor to `all`,
-/// plus a parser in `IMEVoiceConfig.parse` if it stores its settings in a new format.
+/// How a voice shortcut starts and ends a dictation.
+public enum VoiceTrigger: String, Codable, Sendable {
+    /// Hold the shortcut while talking; releasing it ends the dictation (WeType, Doubao).
+    case hold
+    /// Tap the shortcut once to start and tap it again to end (NetEase Bageshuo).
+    case tapToggle
+
+    /// The verb for what this app does with the shortcut: 「按住」 or 「点按」.
+    public var verb: String { self == .hold ? "按住" : "点按" }
+}
+
+/// What does the speech recognition: an input method, or an app of its own.
+public enum VoiceIMEKind: String, Sendable {
+    /// Has input sources; it only hears the shortcut while it is the current input method.
+    case inputMethod
+    /// A normal app with its own global shortcut listener. It has no input source, so there is
+    /// nothing to switch to, and it answers in every input method.
+    case standaloneApp
+}
+
+/// A voice input engine. Everything the app knows about one lives in its descriptor: supporting
+/// another one means adding a descriptor to `all`, plus a parser in `IMEVoiceConfig.parse` if it
+/// stores its settings in a new format.
 public struct VoiceIME: Identifiable, Hashable, Sendable {
     /// Stable identifier, stored in this app's settings.
     public let id: String
     public let name: String
+    public let kind: VoiceIMEKind
+    public let trigger: VoiceTrigger
     public let bundleID: String
     /// Input sources that take voice input; the first enabled one is selected when switching.
+    /// Empty for a standalone app.
     public let inputSourceIDs: [String]
     /// Possible install locations; `~` is the home directory.
     public let installPaths: [String]
-    /// The settings app inside the input method's bundle.
-    public let settingsAppPath: String
+    /// The settings app inside the bundle; nil when the app itself is where its settings live.
+    public let settingsAppPath: String?
     /// The settings file, relative to the home directory.
     public let settingsFilePath: String
     public let settingsFormat: IMESettingsFormat
@@ -24,9 +47,9 @@ public struct VoiceIME: Identifiable, Hashable, Sendable {
     public let pushToTalkName: String
     /// UI name of the press-once shortcut.
     public let toggleName: String
-    /// Recommended hotkey; held when the input method's own shortcut cannot be followed.
+    /// Recommended hotkey; used when the input method's own shortcut cannot be followed.
     public let defaultHotkey: Hotkey
-    /// How to set the input method's hold-to-talk shortcut to `defaultHotkey`.
+    /// How to set the input method's own shortcut to `defaultHotkey`.
     public let setupSteps: [String]
     public let downloadURL: String
     /// A warning about the installed version, if any.
@@ -38,8 +61,13 @@ public struct VoiceIME: Identifiable, Hashable, Sendable {
 
     public var bundleIDs: [String] { [bundleID] + helperBundleIDs }
 
+    public var isStandalone: Bool { kind == .standaloneApp }
+
+    /// The UI name of the shortcut this app drives: the one the trigger uses.
+    public var shortcutName: String { trigger == .hold ? pushToTalkName : toggleName }
+
     public func owns(sourceID: String?) -> Bool {
-        guard let sourceID else { return false }
+        guard !isStandalone, let sourceID else { return false }
         return inputSourceIDs.contains(sourceID) || sourceID == bundleID || sourceID.hasPrefix(bundleID + ".")
     }
 }
@@ -48,6 +76,8 @@ extension VoiceIME {
     public static let weType = VoiceIME(
         id: "wetype",
         name: "微信输入法",
+        kind: .inputMethod,
+        trigger: .hold,
         bundleID: "com.tencent.inputmethod.wetype",
         inputSourceIDs: ["com.tencent.inputmethod.wetype.pinyin"],
         installPaths: ["/Library/Input Methods/WeType.app", "~/Library/Input Methods/WeType.app"],
@@ -79,6 +109,8 @@ extension VoiceIME {
     public static let doubao = VoiceIME(
         id: "doubao",
         name: "豆包输入法",
+        kind: .inputMethod,
+        trigger: .hold,
         bundleID: "com.bytedance.inputmethod.doubaoime",
         inputSourceIDs: ["com.bytedance.inputmethod.doubaoime.pinyin"],
         installPaths: ["/Library/Input Methods/DoubaoIme.app", "~/Library/Input Methods/DoubaoIme.app"],
@@ -98,8 +130,37 @@ extension VoiceIME {
         versionAdvice: { _ in nil }
     )
 
-    /// Supported input methods, in the order 「自动」 falls back to.
-    public static let all: [VoiceIME] = [weType, doubao]
+
+    /// A standalone app (no input source): it listens for its shortcut itself, in every input
+    /// method. Its 「语音输入」 shortcut is press once to start, press again to end.
+    public static let bageshuo = VoiceIME(
+        id: "bageshuo",
+        name: "网易叭哥说",
+        kind: .standaloneApp,
+        trigger: .tapToggle,
+        bundleID: "com.bageshuo",
+        inputSourceIDs: [],
+        installPaths: ["/Applications/网易叭哥说.app", "~/Applications/网易叭哥说.app"],
+        settingsAppPath: nil,
+        settingsFilePath: BageshuoSettings.relativePath,
+        settingsFormat: .bageshuoJSON,
+        helperBundleIDs: [],
+        pushToTalkName: "语音输入",
+        toggleName: "语音输入",
+        defaultHotkey: Hotkey(modifiers: [.leftCommand]),
+        setupSteps: [
+            "点「打开网易叭哥说」，进入「设置 → 快捷键」。",
+            "把「语音输入」的快捷键改成一个程序能模拟的单个修饰键，例如左 Command（⌘）或左 Option（⌥）；Fn 无法被程序模拟。",
+            "回到这里点「重新读取」。选的是「跟随网易叭哥说」的话，这里会自动跟着变。",
+        ],
+        downloadURL: "",
+        versionAdvice: { _ in nil }
+    )
+
+    /// Supported voice engines, in the order 「自动」 falls back to.
+    public static let all: [VoiceIME] = [weType, doubao, bageshuo]
+
+    public static var inputMethods: [VoiceIME] { all.filter { !$0.isStandalone } }
 
     public static func withID(_ id: String) -> VoiceIME? {
         all.first { $0.id == id }
@@ -212,25 +273,49 @@ public struct IMEConflict: Equatable, Sendable {
 }
 
 public enum IMEConflicts {
+    private static func usesCommand(_ hotkey: Hotkey) -> Bool {
+        hotkey.modifiers.contains { $0 == .leftCommand || $0 == .rightCommand }
+    }
+
+    /// Every way `hotkey` may misbehave for `ime`, from what the supported engines' own settings say.
     public static func find(hotkey: Hotkey, ime: VoiceIME, configs: [VoiceIME: IMEVoiceConfig]) -> [IMEConflict] {
         var result: [IMEConflict] = []
         let config = configs[ime]
-        if let toggle = config?.toggle, toggle.enabled != false, toggle.hotkey == hotkey {
+        if ime.trigger == .hold, let toggle = config?.toggle, toggle.enabled != false, toggle.hotkey == hotkey {
             result.append(IMEConflict(
                 summary: "「\(hotkey.displayName)」也是\(ime.name)「\(ime.toggleName)」的快捷键",
                 detail: "按住它会变成按一次开始、再按一次才结束"
             ))
         }
-        if config?.commandSelectsCandidates == true, hotkey.modifiers.contains(where: { $0 == .leftCommand || $0 == .rightCommand }) {
-            result.append(IMEConflict(
-                summary: "\(ime.name)开启了「用左右 Command 选候选词」",
-                detail: "屏幕上有候选词时，按 Command 会选词而不是开始说话"
-            ))
+        if usesCommand(hotkey) {
+            // A standalone app hears the key in every input method, so it can collide with the
+            // candidate selection of any input method; an input method only with its own.
+            let owners = ime.isStandalone ? VoiceIME.inputMethods : [ime]
+            for owner in owners where configs[owner]?.commandSelectsCandidates == true {
+                let detail = ime.isStandalone
+                    ? "\(owner.name)是当前输入法、屏幕上有候选词时，合成的 Command 点按会被它当成选词，\(ime.name)收不到"
+                    : "屏幕上有候选词时，按 Command 会选词而不是开始说话"
+                result.append(IMEConflict(
+                    summary: "\(owner.name)开启了「用左右 Command 选候选词」",
+                    detail: detail
+                ))
+            }
         }
         for other in VoiceIME.all where other != ime {
-            guard let otherConfig = configs[other], otherConfig.worksInOtherInputMethods == true else { continue }
+            guard let otherConfig = configs[other] else { continue }
             let shortcuts = [otherConfig.pushToTalk, otherConfig.toggle].compactMap { $0 }.filter { $0.enabled != false }
-            if shortcuts.contains(where: { $0.hotkey == hotkey }) {
+            guard shortcuts.contains(where: { $0.hotkey == hotkey }) else { continue }
+            if other.isStandalone {
+                result.append(IMEConflict(
+                    summary: "\(other.name)也在用「\(hotkey.displayName)」",
+                    detail: "\(other.name)在任何输入法里都响应它，\(ime.trigger.verb)它时会同时唤起\(other.name)"
+                ))
+            } else if ime.isStandalone {
+                result.append(IMEConflict(
+                    summary: "「\(hotkey.displayName)」也是\(other.name)的语音快捷键",
+                    detail: "\(other.name)是当前输入法时，点按它会同时唤起\(other.name)的语音"
+                ))
+            } else if otherConfig.worksInOtherInputMethods == true {
                 result.append(IMEConflict(
                     summary: "\(other.name)开启了「全局唤起语音」，也在用「\(hotkey.displayName)」",
                     detail: "在\(ime.name)里按住它时，可能同时唤起\(other.name)"

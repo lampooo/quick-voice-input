@@ -12,6 +12,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private lazy var tap = EventTap(settings: settings, probe: probe, keySynth: keySynth)
     private lazy var diagnostics = HotkeyDiagnostics(settings: settings)
     private var menuBar: MenuBarController?
+    private var lastStuckIME: VoiceIME?
     private var setupWindow: SetupWindowController?
     private var permissionTimer: Timer?
     private var lastTrusted = false
@@ -28,6 +29,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         tap.onTapInvalidated = { [weak self] in self?.restartTap() }
         voice.onRecordingChanged = { [weak self] recording in self?.menuBar?.setRecording(recording) }
         voice.onWatchdogRelease = { [weak self] in self?.tap.resetPress() }
+        voice.onStuckChanged = { [weak self] in self?.menuBar?.refreshIcon() }
         commitChecker.onReport = { [weak self] report in
             self?.menuBar?.lastCommit = report
             self?.setupWindow?.model.lastCommit = report
@@ -40,6 +42,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         settings.$voiceIME.dropFirst().removeDuplicates().sink { [weak self] choice in
             self?.voice.releaseNow(reason: "voice input method changed")
             Log.info("voice input method: \(choice.storedValue)")
+        }.store(in: &cancellables)
+        settings.$appRules.dropFirst().removeDuplicates().sink { [weak self] _ in
+            self?.voice.releaseNow(reason: "app rules changed")
         }.store(in: &cancellables)
         settings.noteSelectedInputSource(InputSource.currentSourceID())
         DistributedNotificationCenter.default().addObserver(
@@ -54,6 +59,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         lastTrusted = Permissions.isAccessibilityTrusted
         if lastTrusted {
             startTap()
+            voice.recoverLeftoverRecordings()
         }
         permissionTimer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { [weak self] _ in
             self?.checkPermission()
@@ -88,6 +94,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    /// The tap-to-toggle engine whose recording could not be ended, while it is still recording.
+    var stuckIME: VoiceIME? { voice.stuckIME }
+
+    /// The last tap-to-toggle problem, for the menu.
+    var voiceNotice: String? { voice.recentNotice }
+
     func enabledDidChange() {
         if !settings.enabled {
             tap.resetPress()
@@ -119,6 +131,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             lastTrusted = trusted
             if trusted {
                 startTap()
+                voice.recoverLeftoverRecordings()
             } else {
                 tap.stop()
                 voice.releaseNow(reason: "permission revoked")
@@ -127,11 +140,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } else if trusted, !tap.isRunning, ProcessInfo.processInfo.systemUptime >= nextTapAttempt {
             startTap()
         }
+        let stuck = voice.stuckIME
+        if stuck != lastStuckIME {
+            lastStuckIME = stuck
+            menuBar?.refreshIcon()
+        }
     }
 
     private func shutdown(reason: String) {
         diagnostics.cancel()
-        voice.releaseNow(reason: reason)
+        voice.shutdown(reason: reason)
         keySynth.release()
         tap.stop()
     }

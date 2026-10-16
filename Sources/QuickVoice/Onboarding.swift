@@ -111,8 +111,8 @@ final class SetupModel: ObservableObject {
 
     private func hotkeyWorks(_ ime: VoiceIME) -> Bool {
         let hotkey = resolution(for: ime).hotkey
-        return status(of: ime).pushToTalkMatches(hotkey) == true
-            || diagnostics.ime == ime && diagnostics.candidates.contains { $0.hotkey == hotkey && $0.outcome?.isPushToTalk == true }
+        return status(of: ime).shortcutMatches(hotkey) == true
+            || diagnostics.ime == ime && diagnostics.candidates.contains { $0.hotkey == hotkey && $0.outcome?.isWorking == true }
     }
 
     func finish() {
@@ -462,7 +462,7 @@ private struct VoiceIMEStep: View {
         VStack(alignment: .leading, spacing: 16) {
             StepHeader(
                 title: "选择语音输入法",
-                subtitle: "语音识别由输入法完成，目前支持\(VoiceIME.all.map(\.name).joined(separator: "和"))。快捷语音输入只负责在你长按鼠标时，替你按住它的语音快捷键。"
+                subtitle: "语音识别由输入法或语音输入 App 完成，目前支持\(VoiceIME.all.map(\.name).joined(separator: "、"))。快捷语音输入只负责在你长按鼠标时，替你触发它的语音快捷键：微信输入法、豆包输入法是按住，网易叭哥说是点按一次开始、松开鼠标时再点按一次结束。"
             )
             Picker("语音输入法", selection: $settings.voiceIME) {
                 ForEach(VoiceIMEChoice.all, id: \.self) { choice in
@@ -483,12 +483,14 @@ private struct VoiceIMEStep: View {
     }
 
     private var choiceExplanation: String {
-        let names = VoiceIME.all.map(\.name).joined(separator: "或")
+        let names = VoiceIME.inputMethods.map(\.name).joined(separator: "或")
         switch settings.voiceIME {
         case .automatic:
             let selection = VoiceTarget.select(settings: settings)
             let switching = settings.autoSwitchInputSource ? "，开始前会自动切过去" : ""
-            return "当前输入法是\(names)时就用它；是其它输入法（比如 ABC）时，用最近用过的那个\(switching)。现在长按会用：\(selection.ime.name)（\(selection.explanation)）。"
+            return "当前输入法是\(names)时就用它；是其它输入法（比如 ABC）时，用最近用过的那个\(switching)。独立 App（\(VoiceIME.all.filter(\.isStandalone).map(\.name).joined(separator: "、"))）没有输入法，需要在上面明确选它。现在长按会用：\(selection.ime.name)（\(selection.explanation)）。"
+        case let .fixed(ime) where ime.isStandalone:
+            return "总是用\(ime.name)。它是独立的 App，不需要切换输入法，在任何输入法下都响应；点按一次开始，松开鼠标时再点按一次结束。"
         case let .fixed(ime):
             return settings.autoSwitchInputSource
                 ? "总是用\(ime.name)。当前是别的输入法时，开始前会自动切到\(ime.name)。"
@@ -512,7 +514,7 @@ private struct IMEStatusCard: View {
                         Text(version).font(.callout).foregroundStyle(.secondary)
                     }
                     Spacer()
-                    if status.isCurrent {
+                    if status.isCurrent, !ime.isStandalone {
                         Text("当前输入法")
                             .font(.caption)
                             .padding(.horizontal, 6)
@@ -521,18 +523,22 @@ private struct IMEStatusCard: View {
                     }
                 }
                 if status.isInstalled {
-                    StatusRow(ok: status.isEnabled, text: status.isEnabled ? "已安装，已添加到输入法列表" : "已安装，但还没有添加到输入法列表")
-                    if !status.isEnabled {
-                        Button("添加到输入法列表") {
-                            InputSource.enable(ime)
-                            model.refresh()
+                    if ime.isStandalone {
+                        StatusRow(ok: true, text: "已安装。它是独立的 App，不需要添加到输入法列表，在任何输入法下都响应")
+                    } else {
+                        StatusRow(ok: status.isEnabled, text: status.isEnabled ? "已安装，已添加到输入法列表" : "已安装，但还没有添加到输入法列表")
+                        if !status.isEnabled {
+                            Button("添加到输入法列表") {
+                                InputSource.enable(ime)
+                                model.refresh()
+                            }
                         }
                     }
-                    StatusRow(ok: nil, text: "「\(ime.pushToTalkName)」快捷键：\(status.pushToTalkDescription)")
+                    StatusRow(ok: nil, text: "「\(ime.shortcutName)」快捷键：\(status.shortcutDescription)（\(ime.trigger == .hold ? "按住说话，松手结束" : "点按一次开始，再点按一次结束")）")
                     if let advice = status.versionAdvice {
                         StatusRow(ok: false, text: advice)
                     }
-                    Button("打开\(ime.name)设置") { status.openSettingsApp() }
+                    Button(ime.isStandalone ? "打开\(ime.name)" : "打开\(ime.name)设置") { status.openSettingsApp() }
                 } else {
                     StatusRow(ok: nil, text: "没有安装")
                     if let url = URL(string: ime.downloadURL) {
@@ -566,7 +572,7 @@ private struct HotkeyStep: View {
         Binding(
             get: { HotkeyPreset.matching(settings.hotkeySetting(for: ime).manual)?.id ?? "custom" },
             set: { id in
-                if let preset = HotkeyPreset.all.first(where: { $0.id == id }) { settings.useManualHotkey(preset.hotkey, for: ime) }
+                if let preset = HotkeyPreset.presets(for: ime).first(where: { $0.id == id }) { settings.useManualHotkey(preset.hotkey, for: ime) }
             }
         )
     }
@@ -576,7 +582,9 @@ private struct HotkeyStep: View {
         VStack(alignment: .leading, spacing: 16) {
             StepHeader(
                 title: "设置语音快捷键",
-                subtitle: "长按时，快捷语音输入会替你按住\(ime.name)「\(ime.pushToTalkName)」的快捷键。默认直接跟随\(ime.name)里的设置，不需要额外改动。"
+                subtitle: ime.trigger == .hold
+                    ? "长按时，快捷语音输入会替你按住\(ime.name)「\(ime.shortcutName)」的快捷键。默认直接跟随\(ime.name)里的设置，不需要额外改动。"
+                    : "长按开始时，快捷语音输入会替你点按一次\(ime.name)「\(ime.shortcutName)」的快捷键开始录音，松开鼠标时再点按一次结束。默认直接跟随\(ime.name)里的设置，不需要额外改动。"
             )
             if model.hotkeyIMEs.count > 1 {
                 VStack(alignment: .leading, spacing: 6) {
@@ -607,6 +615,12 @@ private struct HotkeyStep: View {
                 manualSection
             }
             HotkeyRiskNotes(hotkey: resolution.hotkey, conflicts: model.statuses.conflicts(holding: resolution.hotkey, for: ime).map(\.message))
+            if ime.trigger == .tapToggle {
+                Text("点按是一次完整的按下和松开（约 0.1 秒）。只在键盘上没有任何按键按着时才会发出，发出后会确认修饰键已经松开；结束的那一次点按会先确认麦克风真的在录音，再发出，并且和开始那一次至少隔 0.8 秒。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             if let title = guideTitle(resolution) {
                 imeGuide(title: title)
             }
@@ -620,7 +634,7 @@ private struct HotkeyStep: View {
     private func followSection(_ resolution: HotkeyResolution) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             if resolution.followsIME {
-                StatusRow(ok: true, text: "\(ime.name)的「\(ime.pushToTalkName)」是「\(status.pushToTalkDescription)」，长按时会按住同样的键。以后在\(ime.name)里改键，下一次长按就会跟着变，不用重启。")
+                StatusRow(ok: true, text: "\(ime.name)的「\(ime.shortcutName)」是「\(status.shortcutDescription)」，长按时会\(ime.trigger.verb)同样的键。以后在\(ime.name)里改键，下一次长按就会跟着变，不用重启。")
             } else {
                 StatusRow(ok: false, text: resolution.fallbackReason ?? "没能跟随\(ime.name)的设置。")
             }
@@ -634,8 +648,8 @@ private struct HotkeyStep: View {
 
     private var manualSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Picker("快捷语音输入替你按住：", selection: presetBinding) {
-                ForEach(HotkeyPreset.all) { preset in
+            Picker("快捷语音输入替你\(ime.trigger.verb)：", selection: presetBinding) {
+                ForEach(HotkeyPreset.presets(for: ime)) { preset in
                     Text(preset.title(for: ime)).tag(preset.id)
                 }
                 if HotkeyPreset.matching(setting.manual) == nil {
@@ -657,12 +671,12 @@ private struct HotkeyStep: View {
 
     @ViewBuilder
     private var matchRow: some View {
-        switch status.pushToTalkMatches(setting.manual) {
+        switch status.shortcutMatches(setting.manual) {
         case .some(true):
-            StatusRow(ok: true, text: "与\(ime.name)的「\(ime.pushToTalkName)」（\(status.pushToTalkDescription)）一致")
+            StatusRow(ok: true, text: "与\(ime.name)的「\(ime.shortcutName)」（\(status.shortcutDescription)）一致")
         case .some(false):
             VStack(alignment: .leading, spacing: 6) {
-                StatusRow(ok: false, text: "\(ime.name)的「\(ime.pushToTalkName)」目前是「\(status.pushToTalkDescription)」，和这里选的不一致")
+                StatusRow(ok: false, text: "\(ime.name)的「\(ime.shortcutName)」目前是「\(status.shortcutDescription)」，和这里选的不一致")
                 Button("改为跟随\(ime.name)") { settings.setHotkeySource(.followIME, for: ime) }
                     .buttonStyle(.link)
                     .font(.callout)
@@ -678,7 +692,7 @@ private struct HotkeyStep: View {
             return "需要在\(ime.name)里换一个键"
         }
         if !resolution.hotkey.risks.isEmpty {
-            return "更稳妥的做法（可选）：把\(ime.name)的「\(ime.pushToTalkName)」改成\(ime.defaultHotkey.displayName)"
+            return "更稳妥的做法（可选）：把\(ime.name)的「\(ime.shortcutName)」改成\(ime.defaultHotkey.displayName)"
         }
         return nil
     }
@@ -691,7 +705,7 @@ private struct HotkeyStep: View {
                     Numbered(index: index + 1, text: text)
                 }
                 HStack {
-                    Button("打开\(ime.name)设置") { status.openSettingsApp() }
+                    Button(ime.isStandalone ? "打开\(ime.name)" : "打开\(ime.name)设置") { status.openSettingsApp() }
                     Button("重新读取") { model.refresh() }
                 }
                 .padding(.top, 4)
@@ -712,6 +726,15 @@ struct HotkeyTestSection: View {
     /// Results belong to the input method they were measured with.
     private var showsResults: Bool { diagnostics.ime == ime }
 
+    private var testDescription: String {
+        switch ime.trigger {
+        case .hold:
+            return "测试会切到\(ime.name)，依次按住每个候选键约 2 秒，通过麦克风有没有开始工作来判断哪个键可用。全程约 20 秒，期间不用说话，也请不要操作键盘和鼠标。"
+        case .tapToggle:
+            return "测试会让\(ime.name)真的开始录音：依次对每个候选键点按一次开始，约 1.5 秒后再点按一次结束，通过麦克风有没有开始、有没有停止来判断它能不能用。全程约 15 秒，期间不用说话，也请不要操作键盘和鼠标。"
+        }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 10) {
@@ -723,7 +746,7 @@ struct HotkeyTestSection: View {
                     Button("停止") { diagnostics.cancel() }
                 }
             }
-            Text("测试会切到\(ime.name)，依次按住每个候选键约 2 秒，通过麦克风有没有开始工作来判断哪个键可用。全程约 20 秒，期间不用说话，也请不要操作键盘和鼠标。")
+            Text(testDescription)
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -779,8 +802,8 @@ struct HotkeyTestSection: View {
         } else {
             switch candidate.outcome {
             case .none: Image(systemName: "circle").foregroundStyle(.secondary)
-            case .some(.pushToTalk): Image(systemName: "checkmark.circle.fill").foregroundStyle(Color.green)
-            case .some(.toggle): Image(systemName: "exclamationmark.circle.fill").foregroundStyle(Color.orange)
+            case .some(.pushToTalk), .some(.tapToggle): Image(systemName: "checkmark.circle.fill").foregroundStyle(Color.green)
+            case .some(.toggle), .some(.tapStuck): Image(systemName: "exclamationmark.circle.fill").foregroundStyle(Color.orange)
             case .some(.micBusy), .some(.skipped): Image(systemName: "questionmark.circle").foregroundStyle(Color.orange)
             case .some(.noResponse): Image(systemName: "xmark.circle").foregroundStyle(.secondary)
             }

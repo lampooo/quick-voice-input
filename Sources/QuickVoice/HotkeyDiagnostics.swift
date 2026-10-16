@@ -33,20 +33,24 @@ final class HotkeyDiagnostics: ObservableObject {
 
     private let startTimeout: TimeInterval = 2.0
     private let stopTimeout: TimeInterval = 2.5
+    /// How long a tap-to-toggle engine is left recording during its test.
+    private let tapRecordingTime: TimeInterval = 1.5
 
     init(settings: AppSettings) {
         self.settings = settings
     }
 
-    /// The input method's press-once key is not tested: it would start a recording that only ends
-    /// with another press, and the settings already say what it does.
+    /// For a hold-to-talk engine the input method's press-once key is not tested: it would start a
+    /// recording that only ends with another press, and the settings already say what it does.
+    /// A tap-to-toggle engine only reacts to its own shortcut, so the candidates are that one, the
+    /// key the app uses now, and the recommended one.
     static func buildCandidates(current resolution: HotkeyResolution, status: IMEStatus) -> [Candidate] {
         let ime = status.ime
         var list: [Candidate] = []
         func add(_ hotkey: Hotkey, _ title: String) {
             guard hotkey.isValid, !list.contains(where: { $0.hotkey == hotkey }) else { return }
             var candidate = Candidate(title: title, hotkey: hotkey)
-            if let toggle = status.voice?.toggle, toggle.enabled != false, toggle.hotkey == hotkey {
+            if ime.trigger == .hold, let toggle = status.voice?.toggle, toggle.enabled != false, toggle.hotkey == hotkey {
                 candidate.outcome = .skipped("这是\(ime.name)「\(ime.toggleName)」的快捷键")
             }
             list.append(candidate)
@@ -54,11 +58,15 @@ final class HotkeyDiagnostics: ObservableObject {
         let current = resolution.hotkey
         let origin = resolution.followsIME ? "（跟随\(ime.name)）" : ""
         add(current, "当前生效：" + (HotkeyPreset.matching(current)?.title(for: ime) ?? current.displayName) + origin)
-        if let own = status.voice?.pushToTalk?.hotkey {
-            add(own, "\(ime.name)当前的「\(ime.pushToTalkName)」：\(own.displayName)")
+        if let own = status.shortcut?.hotkey {
+            add(own, "\(ime.name)当前的「\(ime.shortcutName)」：\(own.displayName)")
+        }
+        if ime.trigger == .tapToggle {
+            add(ime.defaultHotkey, "推荐：" + ime.defaultHotkey.displayName)
+            return list
         }
         // Right Shift switches input methods between Chinese and English, so it is only tested when chosen.
-        for preset in HotkeyPreset.all where preset.id != HotkeyPreset.rightShift.id {
+        for preset in HotkeyPreset.presets(for: ime) where preset.id != HotkeyPreset.rightShift.id {
             add(preset.hotkey, preset.title(for: ime))
         }
         return list
@@ -94,7 +102,7 @@ final class HotkeyDiagnostics: ObservableObject {
             summary = "没有找到\(ime.name)。请先安装\(ime.name) Mac 版。"
             return
         }
-        guard status.isEnabled else {
+        guard status.isEnabled || ime.isStandalone else {
             summary = "\(ime.name)还没有添加到输入法列表。请先在「系统设置 → 键盘 → 输入法」里添加它。"
             return
         }
@@ -131,7 +139,7 @@ final class HotkeyDiagnostics: ObservableObject {
                 InputSource.select(ime)
             }
             usleep(300_000)
-            let outcome = test(candidate.hotkey)
+            let outcome = ime.trigger == .tapToggle ? testTap(candidate.hotkey, ime: ime) : test(candidate.hotkey)
             Log.info("hotkey test \(ime.id) \(candidate.hotkey.displayName): \(outcome)")
             onMain {
                 self.candidates[index].outcome = outcome
@@ -142,7 +150,7 @@ final class HotkeyDiagnostics: ObservableObject {
         }
         keySynth.release()
         onMain {
-            if let previousSource, !ime.owns(sourceID: previousSource) {
+            if let previousSource, !ime.isStandalone, !ime.owns(sourceID: previousSource) {
                 InputSource.select(sourceID: previousSource)
             }
             self.finish(ime: ime, secureInput: secureInput)
@@ -182,6 +190,25 @@ final class HotkeyDiagnostics: ObservableObject {
         return HotkeyTestOutcome.evaluate(micBusyBefore: false, startLatency: latency, stoppedAfterRelease: stopped)
     }
 
+    /// Taps `hotkey` to start, lets the engine record for a moment, then taps it to stop: the same
+    /// safe sequence a long press uses. Skipped when the microphone is busy or a real key is down.
+    private func testTap(_ hotkey: Hotkey, ime: VoiceIME) -> HotkeyTestOutcome {
+        let environment = LiveTapToggleEnvironment(ime: ime, keySynth: keySynth)
+        let session = TapToggleSession(environment: environment, timing: settings.tapToggleTiming)
+        let start = session.start(hotkey, shouldAbort: { [weak self] in self?.isCancelled ?? true })
+        guard case .started = start else {
+            return HotkeyTestOutcome.evaluate(start: start, stop: nil, stopLatency: 0)
+        }
+        let listenUntil = ProcessInfo.processInfo.systemUptime + tapRecordingTime
+        while ProcessInfo.processInfo.systemUptime < listenUntil, !isCancelled {
+            usleep(50_000)
+        }
+        let stopRequestedAt = ProcessInfo.processInfo.systemUptime
+        let stop = session.stop(reason: isCancelled ? "test cancelled" : "hotkey test")
+        let stopLatency = ProcessInfo.processInfo.systemUptime - stopRequestedAt
+        return HotkeyTestOutcome.evaluate(start: start, stop: stop, stopLatency: stopLatency)
+    }
+
     private func micStarted(since baseline: Set<AudioObjectID>) -> Bool {
         let running = MicMonitor.runningInputs()
         if let device = MicMonitor.defaultInputDevice(), running.contains(device) { return true }
@@ -201,18 +228,24 @@ final class HotkeyDiagnostics: ObservableObject {
         isRunning = false
         progress = nil
         let current = settings.resolvedHotkey(for: ime).hotkey
-        let working = candidates.filter { $0.outcome?.isPushToTalk == true }
+        let working = candidates.filter { $0.outcome?.isWorking == true }
         let recommended = ime.defaultHotkey.displayName
+        let shortcutName = ime.shortcutName
         var lines: [String] = []
         if working.contains(where: { $0.hotkey == current }) {
-            lines.append("✅ 当前快捷键「\(current.displayName)」可以正常触发\(ime.name)的「\(ime.pushToTalkName)」，可以开始使用了。")
+            let how = ime.trigger == .hold ? "按住它" : "点按它一次开始、再点按一次结束"
+            lines.append("✅ 当前快捷键「\(current.displayName)」可以正常触发\(ime.name)的「\(shortcutName)」（\(how)），可以开始使用了。")
         } else if let first = working.first {
             suggestion = first
-            lines.append("「\(first.hotkey.displayName)」可以触发「\(ime.pushToTalkName)」，但和当前设置「\(current.displayName)」不一样。点下面的按钮改用它。")
+            lines.append("「\(first.hotkey.displayName)」可以触发「\(shortcutName)」，但和当前设置「\(current.displayName)」不一样。点下面的按钮改用它。")
+        } else if let stuck = candidates.first(where: { if case .tapStuck = $0.outcome { return true } else { return false } }) {
+            lines.append("「\(stuck.hotkey.displayName)」能让\(ime.name)开始录音，但再点按一次没能结束它（已经补发过一次）。请先在\(ime.name)里手动结束这次录音，再检查它的「\(shortcutName)」是不是按一次开始、再按一次结束。")
         } else if let toggle = candidates.first(where: { if case .toggle = $0.outcome { return true } else { return false } }) {
             lines.append("「\(toggle.hotkey.displayName)」是\(ime.name)的「\(ime.toggleName)」快捷键（按一下开始、再按结束），不适合长按。请在\(ime.name)设置里把「\(ime.pushToTalkName)」改成「\(recommended)」后重新测试。")
         } else if candidates.contains(where: { $0.outcome == .micBusy }) {
             lines.append("测试时麦克风被其它应用占用，结果不可靠。请关闭正在使用麦克风的应用（会议、录音软件等）后重新测试。")
+        } else if ime.isStandalone {
+            lines.append("没有候选键能触发\(ime.name)录音。请确认\(ime.name)正在运行、已经登录并授权，再打开它的设置，把「\(shortcutName)」的快捷键改成「\(recommended)」，然后重新测试。")
         } else {
             lines.append("没有候选键能触发\(ime.name)录音。请打开\(ime.name)设置，把「\(ime.pushToTalkName)」的快捷键改成「\(recommended)」，再重新测试。")
         }
@@ -224,7 +257,7 @@ final class HotkeyDiagnostics: ObservableObject {
 
     func adoptSuggestion() {
         guard let suggestion, let ime else { return }
-        if IMEConfigCache.shared.config(for: ime)?.pushToTalk?.hotkey == suggestion.hotkey {
+        if IMEConfigCache.shared.config(for: ime)?.shortcut(for: ime.trigger)?.hotkey == suggestion.hotkey {
             settings.setHotkeySource(.followIME, for: ime)
         } else {
             settings.useManualHotkey(suggestion.hotkey, for: ime)

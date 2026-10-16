@@ -2,7 +2,7 @@ import Foundation
 
 /// Where an input method's voice hotkey comes from.
 public enum HotkeySource: String, Codable, CaseIterable, Sendable {
-    /// Read the input method's own 「按住说话」 shortcut and hold exactly that.
+    /// Read the input method's own voice shortcut and press exactly that.
     case followIME
     /// Use the hotkey chosen or recorded in this app.
     case manual
@@ -37,7 +37,7 @@ public struct IMEHotkeySetting: Codable, Hashable, Sendable {
 public struct HotkeyResolution: Equatable, Sendable {
     public var ime: VoiceIME
     public var hotkey: Hotkey
-    /// True when `hotkey` is the input method's own 「按住说话」 shortcut.
+    /// True when `hotkey` is the input method's own voice shortcut.
     public var followsIME: Bool
     /// Why following the input method was not possible, shown to the user.
     public var fallbackReason: String?
@@ -62,14 +62,14 @@ public enum HotkeyResolver {
             return HotkeyResolution(ime: ime, hotkey: manual, followsIME: false)
         }
         func fallback(_ reason: String) -> HotkeyResolution {
-            HotkeyResolution(ime: ime, hotkey: manual, followsIME: false, fallbackReason: reason + "，暂时按住「\(manual.displayName)」")
+            HotkeyResolution(ime: ime, hotkey: manual, followsIME: false, fallbackReason: reason + "，暂时\(ime.trigger.verb)「\(manual.displayName)」")
         }
-        let shortcutName = "\(ime.name)的「\(ime.pushToTalkName)」"
+        let shortcutName = "\(ime.name)的「\(ime.shortcutName)」"
         guard let config else {
             return fallback("没能读取\(ime.name)的设置")
         }
-        guard let shortcut = config.pushToTalk else {
-            return fallback("\(ime.name)没有记录「\(ime.pushToTalkName)」快捷键（默认是 Fn，程序无法模拟）")
+        guard let shortcut = config.shortcut(for: ime.trigger) else {
+            return fallback("\(ime.name)没有记录「\(ime.shortcutName)」快捷键（默认是 Fn，程序无法模拟）")
         }
         if shortcut.isCleared {
             return fallback("\(shortcutName)快捷键是空的，请先在\(ime.name)里设置它")

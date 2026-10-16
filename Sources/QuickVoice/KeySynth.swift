@@ -67,6 +67,13 @@ final class KeySynth {
         release()
     }
 
+    /// Posts the release events of `hotkey` again, without touching what this object thinks is held.
+    func forceRelease(_ hotkey: Hotkey) {
+        lock.lock()
+        defer { lock.unlock() }
+        post(hotkey.releaseSequence)
+    }
+
     /// Ends the target app's mouse-tracking loop without the user releasing the button. Posted at
     /// the session level: a HID-level mouse-up would also mark the button as released in the
     /// HID state, and the window server would then drop the real mouse-up.

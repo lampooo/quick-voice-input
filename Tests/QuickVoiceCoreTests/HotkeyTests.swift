@@ -87,7 +87,39 @@ final class HotkeyTests: XCTestCase {
             XCTAssertFalse(preset.hotkey.keyCodes.contains(KeyCode.function), preset.id)
         }
         XCTAssertEqual(HotkeyPreset.matching(Hotkey(modifiers: [.rightOption])), .rightOption)
-        XCTAssertNil(HotkeyPreset.matching(Hotkey(modifiers: [.leftCommand])))
+        XCTAssertNil(HotkeyPreset.matching(Hotkey(modifiers: [.leftShift])))
+    }
+
+    func testTapToggleEnginesGetTheirOwnPresets() {
+        XCTAssertEqual(HotkeyPreset.matching(VoiceIME.bageshuo.defaultHotkey), .leftCommand)
+        XCTAssertEqual(HotkeyPreset.leftCommand.title(for: .bageshuo), "左 Command（推荐）")
+        XCTAssertEqual(HotkeyPreset.presets(for: .weType), HotkeyPreset.all)
+        XCTAssertEqual(HotkeyPreset.presets(for: .bageshuo), HotkeyPreset.tapToggle)
+        XCTAssertEqual(Set(HotkeyPreset.tapToggle.map(\.id)).count, HotkeyPreset.tapToggle.count)
+        for preset in HotkeyPreset.tapToggle {
+            XCTAssertTrue(preset.hotkey.isValid, preset.id)
+        }
+    }
+
+    func testTapTestOutcomeEvaluation() {
+        typealias Outcome = HotkeyTestOutcome
+        XCTAssertEqual(Outcome.evaluate(start: .started(latency: 0.2), stop: .stopped(retried: false), stopLatency: 0.1), .tapToggle(startLatency: 0.2, stopLatency: 0.1))
+        XCTAssertEqual(Outcome.evaluate(start: .started(latency: 0.2), stop: .stopped(retried: true), stopLatency: 2.1), .tapToggle(startLatency: 0.2, stopLatency: 2.1))
+        XCTAssertEqual(Outcome.evaluate(start: .started(latency: 0.2), stop: .stuck, stopLatency: 4), .tapStuck(startLatency: 0.2))
+        XCTAssertEqual(Outcome.evaluate(start: .started(latency: 0.2), stop: nil, stopLatency: 0), .tapStuck(startLatency: 0.2))
+        XCTAssertEqual(Outcome.evaluate(start: .notStarted, stop: nil, stopLatency: 0), .noResponse)
+        XCTAssertEqual(Outcome.evaluate(start: .micBusy, stop: nil, stopLatency: 0), .micBusy)
+        XCTAssertTrue(Outcome.evaluate(start: .realKeysHeld, stop: nil, stopLatency: 0).summary(for: .bageshuo).hasPrefix("已跳过"))
+        if case .skipped = Outcome.evaluate(start: .started(latency: 0.2), stop: .endedByItself, stopLatency: 0) {} else {
+            XCTFail("a recording that ended by itself proves nothing about the stop tap")
+        }
+        XCTAssertTrue(Outcome.tapToggle(startLatency: 0.2, stopLatency: 0.1).isWorking)
+        XCTAssertTrue(Outcome.pushToTalk(latency: 0.2).isWorking)
+        XCTAssertFalse(Outcome.tapStuck(startLatency: 0.2).isWorking)
+        XCTAssertFalse(Outcome.toggle(latency: 0.2).isWorking)
+        XCTAssertFalse(Outcome.tapToggle(startLatency: 0.2, stopLatency: 0.1).isPushToTalk)
+        XCTAssertEqual(Outcome.tapToggle(startLatency: 0.5, stopLatency: 0.2).summary(for: .bageshuo), "可用：点按一次约 0.5 秒后开始录音，再点按一次约 0.2 秒后结束")
+        XCTAssertEqual(Outcome.tapStuck(startLatency: 0.5).summary(for: .bageshuo), "点按一次能开始录音（0.5 秒），但再点按没能结束：请手动在网易叭哥说里结束这次录音")
     }
 
     func testHotkeyCodableRoundTrip() throws {

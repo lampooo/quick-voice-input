@@ -11,11 +11,24 @@ final class VoiceIMETests: XCTestCase {
         for ime in VoiceIME.all {
             XCTAssertTrue(ime.defaultHotkey.isValid, ime.id)
             XCTAssertTrue(ime.defaultHotkey.risks.isEmpty, ime.id)
-            XCTAssertFalse(ime.inputSourceIDs.isEmpty, ime.id)
+            XCTAssertEqual(ime.inputSourceIDs.isEmpty, ime.isStandalone, "only a standalone app has no input source: \(ime.id)")
             XCTAssertEqual(VoiceIME.withID(ime.id), ime)
         }
         XCTAssertEqual(VoiceIME.doubao.defaultHotkey, Hotkey(modifiers: [.rightCommand]))
         XCTAssertEqual(VoiceIME.weType.defaultHotkey, Hotkey(modifiers: [.rightOption]))
+        XCTAssertEqual(VoiceIME.bageshuo.defaultHotkey, Hotkey(modifiers: [.leftCommand]))
+        XCTAssertEqual(VoiceIME.inputMethods, [.weType, .doubao])
+    }
+
+    func testTriggerModes() {
+        XCTAssertEqual(VoiceIME.weType.trigger, .hold)
+        XCTAssertEqual(VoiceIME.doubao.trigger, .hold)
+        XCTAssertEqual(VoiceIME.bageshuo.trigger, .tapToggle)
+        XCTAssertEqual(VoiceIME.bageshuo.kind, .standaloneApp)
+        XCTAssertEqual(VoiceTrigger.hold.verb, "按住")
+        XCTAssertEqual(VoiceTrigger.tapToggle.verb, "点按")
+        XCTAssertEqual(VoiceIME.weType.shortcutName, "按住说话")
+        XCTAssertEqual(VoiceIME.bageshuo.shortcutName, "语音输入")
     }
 
     func testOwnsInputSources() {
@@ -35,7 +48,31 @@ final class VoiceIMETests: XCTestCase {
         }
         XCTAssertEqual(VoiceIMEChoice(storedValue: nil), .automatic)
         XCTAssertEqual(VoiceIMEChoice(storedValue: "sogou"), .automatic, "unknown input methods fall back to 自动")
-        XCTAssertEqual(VoiceIMEChoice.all.map(\.title), ["自动（跟随当前输入法）", "微信输入法", "豆包输入法"])
+        XCTAssertEqual(VoiceIMEChoice.all.map(\.title), ["自动（跟随当前输入法）", "微信输入法", "豆包输入法", "网易叭哥说"])
+    }
+
+    func testStandaloneAppOwnsNoInputSource() {
+        for id in [weTypeSource, doubaoSource, "com.bageshuo", "com.bageshuo.pinyin", "com.apple.keylayout.ABC", ""] {
+            XCTAssertFalse(VoiceIME.bageshuo.owns(sourceID: id), id)
+        }
+        XCTAssertNil(VoiceIME.owning(sourceID: "com.bageshuo"))
+        XCTAssertTrue(VoiceIME.bageshuo.isStandalone)
+        XCTAssertTrue(VoiceIME.bageshuo.inputSourceIDs.isEmpty)
+    }
+
+    func testChoosingAStandaloneAppNeedsNoInputMethodSwitch() {
+        let selection = VoiceIMESelector.select(.fixed(.bageshuo), in: environment(current: weTypeSource))
+        XCTAssertEqual(selection, VoiceIMESelection(ime: .bageshuo, reason: .chosen))
+    }
+
+    func testAutomaticOnlyFallsBackToAStandaloneAppWhenNothingElseIsInstalled() {
+        let abc = "com.apple.keylayout.ABC"
+        XCTAssertEqual(VoiceIMESelector.select(.automatic, in: environment(current: abc, enabled: [], installed: ["wetype", "bageshuo"])),
+                       VoiceIMESelection(ime: .weType, reason: .installed))
+        XCTAssertEqual(VoiceIMESelector.select(.automatic, in: environment(current: abc, enabled: [], installed: ["bageshuo"])),
+                       VoiceIMESelection(ime: .bageshuo, reason: .installed))
+        XCTAssertEqual(VoiceIMESelector.select(.automatic, in: environment(current: abc, enabled: ["wetype"], installed: ["wetype", "bageshuo"], lastUsed: "bageshuo")),
+                       VoiceIMESelection(ime: .weType, reason: .enabled), "a standalone app is never 「最近用过」: it is not an input source")
     }
 
     private func environment(current: String?, enabled: Set<String> = ["wetype", "doubao"], installed: Set<String> = ["wetype", "doubao"],
@@ -138,7 +175,8 @@ final class VoiceIMETests: XCTestCase {
 
     func testInputMethodsAndTheirSettingsAppsAreAlwaysExcluded() {
         for bundleID in ["com.tencent.inputmethod.wetype", "com.tencent.WeTypeSettings",
-                         "com.bytedance.inputmethod.doubaoime", "com.bytedance.inputmethod.doubaoime.settings"] {
+                         "com.bytedance.inputmethod.doubaoime", "com.bytedance.inputmethod.doubaoime.settings",
+                         "com.bageshuo"] {
             XCTAssertFalse(AppRules.canChangeRule(for: bundleID), bundleID)
             XCTAssertEqual(AppRules.rule(for: bundleID, overrides: [bundleID: .anywhere]), .never, bundleID)
         }

@@ -18,9 +18,10 @@ enum InputSource {
     }
 
     /// Selects the input method's first enabled voice input source. Returns false on failure.
+    /// A standalone app has no input source and answers in any input method: nothing to switch.
     @discardableResult
     static func select(_ ime: VoiceIME) -> Bool {
-        if isCurrent(ime) { return true }
+        if ime.isStandalone || isCurrent(ime) { return true }
         guard let source = enabledSource(of: ime) else {
             Log.info("\(ime.id) input source is not enabled")
             return false
