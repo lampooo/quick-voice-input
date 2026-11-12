@@ -70,7 +70,7 @@ Bundle ID：「辅助功能」授权和设置都跟着 Bundle ID 走，所以打
 | 豆包输入法 | 右 Command（⌘） | 豆包输入法设置 →「语音快捷键设置」→「按住说话，松手结束」 |
 | 网易叭哥说（「语音输入」，点按切换） | 左侧 ⌃⌘ + L（左 Control + 左 Command + L；叭哥说最多录 3 个键）；单独的左 Command 也可以 | 网易叭哥说设置 →「快捷键」→「语音输入」；设置在 `~/Library/Application Support/com.bageshuo/bageshuo-store.json` |
 
-这几个键程序都能模拟。微信输入法、豆包输入法的键单独按也不会打出字符；叭哥说的组合里的 L 由叭哥说自己拦下。豆包默认把右 Option 用作「按一次开始说话」，所以豆包不要用右 Option；右 Shift 会切换输入法的中英文，也不建议用。叭哥说不要用右 Option、右 Command：它在任何输入法下都监听，会和微信输入法、豆包输入法同时响应。调研细节见 [docs/wetype-spike.md](docs/wetype-spike.md)、[docs/doubao-spike.md](docs/doubao-spike.md)、[docs/bageshuo-spike.md](docs/bageshuo-spike.md)，叭哥说推荐键的核对记录见 [docs/bageshuo-hotkey.md](docs/bageshuo-hotkey.md)。
+这几个键程序都能模拟。微信输入法、豆包输入法的键单独按也不会打出字符；叭哥说的组合里的 L 由叭哥说自己拦下。豆包默认把右 Option 用作「按一次开始说话」，所以豆包不要用右 Option；右 Shift 会切换输入法的中英文，也不建议用。叭哥说不要用右 Option、右 Command：它在任何输入法下都监听，会和微信输入法、豆包输入法同时响应。
 
 ## 网易叭哥说（点按开始 / 点按结束）
 
@@ -93,7 +93,7 @@ Bundle ID：「辅助功能」授权和设置都跟着 Bundle ID 走，所以打
 
 **单独的左 Command 也可以用**，不是非改不可：单独一个修饰键什么都打不出来。要注意的是输入法开着「用左右 Command 选候选词」、屏幕上正好有候选词时，这次点按会被当成选词（设置向导会提示）。不想用带 Command 的组合，可以用左侧 ⌃⌥ + V。
 
-开发机上核对过：系统快捷键（`com.apple.symbolichotkeys`）没有 ⌃⌘L；正在运行的 60 个有菜单栏的软件里只有终端用到；能拦截按键的全局监听只有微信输入法和叭哥说；叭哥说的热键监听不看按键来自哪个进程，会接受合成的按键。用 Carbon 注册的全局热键查不出来，合成后是否被拦下也要实测。详见 [docs/bageshuo-hotkey.md](docs/bageshuo-hotkey.md)。
+开发机上核对过：系统快捷键（`com.apple.symbolichotkeys`）没有 ⌃⌘L；正在运行的 60 个有菜单栏的软件里只有终端用到；能拦截按键的全局监听只有微信输入法和叭哥说；叭哥说的热键监听不看按键来自哪个进程，会接受合成的按键。用 Carbon 注册的全局热键查不出来，合成后是否被拦下也要实测。
 
 ### 防止录音卡住或误触发
 
@@ -237,3 +237,7 @@ swift test               # 运行 QuickVoiceCore 的单元测试
 
 3. 删除 `~/Applications/快捷语音输入.app`。
 4. 在「系统设置 → 隐私与安全性 → 辅助功能」里删除它；如果开了开机启动，也到「登录项」里删除。
+
+## 许可证
+
+[MIT](LICENSE)
